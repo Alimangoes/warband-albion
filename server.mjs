@@ -16,16 +16,17 @@ const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname);
 const secure = base.protocol === 'https:';
 const snowflake = value => /^\d{17,20}$/.test(value || '');
 if ((!secure && !(loopback && base.protocol === 'http:')) || base.href !== base.origin + '/') throw new Error('Set APP_URL to the HTTPS public origin or an HTTP localhost origin.');
-if (!demo && (!snowflake(client) || !snowflake(guildId) || !secret || !token)) throw new Error('Set the four DISCORD_ values in .env.');
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-if (onVercel && (!secure || !connectionString)) throw new Error('Set a public HTTPS APP_URL and DATABASE_URL on Vercel.');
+const setupRequired = (!demo && (!snowflake(client) || !snowflake(guildId) || !secret || !token))
+  || (onVercel && (!secure || !connectionString));
+if (setupRequired && !onVercel) throw new Error('Set the four DISCORD_ values in .env.');
 const bot = 'Bot ' + token;
 const callback = new URL('/auth/discord/callback', base).href;
 const key = () => randomBytes(16).toString('base64url');
 const hash = value => createHash('sha256').update(value).digest('hex');
 
-const db = connectionString ? openPostgres(connectionString) : openSQLite();
-const { get, put, remove } = db;
+const db = setupRequired ? null : connectionString ? openPostgres(connectionString) : openSQLite();
+const { get, put, remove } = db || {};
 const auth = demo ? 'albion_demo' : 'albion_session';
 const csrf = 'albion_oauth';
 const cookie = (name, value, age) => name + '=' + value + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + age + (secure ? '; Secure' : '');
@@ -309,6 +310,7 @@ async function routes(req, res) {
     res.setHeader('Content-Type', mime);
     return res.end(readFileSync(file));
   }
+  if (setupRequired) throw new Problem(503, 'Server setup is in progress. Ask your organizer when the board will open.');
   if (req.method === 'GET' && ['/auth/discord', '/auth/discord/callback'].includes(path)) {
     await cleanup();
     return oauth(req, res, url);
