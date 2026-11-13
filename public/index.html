@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Organize Albion Online guild parties and signups with Discord.">
+  <meta name="theme-color" content="#101013">
+  <title>Warband — Albion Party Organizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Workspace">
+      <a href="/" class="brand" aria-label="Warband home"><span class="crest" data-icon="crest"></span><span><strong>WARBAND</strong><small>ALBION PARTY ORGANIZER</small></span></a>
+      <div class="server-tile"><span class="server-icon" data-icon="castle"></span><div><strong id="server-name">Guild workspace</strong><small id="server-detail">Albion Online</small></div></div>
+      <nav aria-label="Main navigation">
+        <p class="nav-label">WORKSPACE</p>
+        <button data-page="board" class="nav-button active"><span data-icon="swords"></span>Party board</button>
+        <button data-page="mine" class="nav-button"><span data-icon="flag"></span>My signups</button>
+        <button data-page="roster" class="nav-button"><span data-icon="users"></span>Guild roster</button>
+        <p class="nav-label settings-label">PREFERENCES</p>
+        <button data-page="settings" class="nav-button"><span data-icon="gear"></span>Settings</button>
+      </nav>
+      <button class="profile-tile" data-page="profile"><span class="profile-icon" data-icon="user"></span><span><strong id="profile-name">Your profile</strong><small id="profile-detail">Albion character</small></span><span data-icon="chevron"></span></button>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div class="breadcrumbs"><span>Workspace</span><span data-icon="chevron"></span><strong id="breadcrumb">Party board</strong></div>
+        <div class="top-actions"><span id="mode" class="mode" hidden><i></i> Demo workspace</span><button class="button primary create" hidden><span data-icon="plus"></span>Create party</button></div>
+      </header>
+      <div id="view" class="content" aria-busy="true"><p class="loading">Loading party board…</p></div>
+    </main>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

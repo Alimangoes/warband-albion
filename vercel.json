@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "functions": {
+    "api/warband.mjs": {
+      "includeFiles": "public/**",
+      "maxDuration": 45
+    }
+  },
+  "rewrites": [
+    { "source": "/", "destination": "/api/warband?warbandRoute=home" },
+    { "source": "/auth/discord", "destination": "/api/warband?warbandRoute=login" },
+    { "source": "/auth/discord/callback", "destination": "/api/warband?warbandRoute=callback" },
+    { "source": "/api/:path(board|logout|options|roster|settings|character|party)", "destination": "/api/warband?warbandRoute=:path" },
+    { "source": "/api/party/action", "destination": "/api/warband?warbandRoute=action" }
+  ]
+}
