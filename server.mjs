@@ -279,19 +279,27 @@ async function oauth(req, res, url) {
   if (!state || state !== readCookie(req, csrf)) return redirect(res, '/?login=cancelled');
   const party = await db.take('oauth:' + hash(state));
   if (party === null || !code) return redirect(res, '/?login=cancelled');
+  let stage = 'token exchange';
   try {
     const exchange = await request('https://discord.com/api/oauth2/token', {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ client_id: client, client_secret: secret, grant_type: 'authorization_code', code, redirect_uri: callback })
     }, 'Discord');
+    stage = 'user lookup';
     const user = await discord('/users/@me', 'Bearer ' + exchange.access_token);
     if (!snowflake(user.id)) throw new Problem(502, 'Discord returned an unexpected user.');
     const profile = { id: user.id, name: user.global_name || user.username };
+    stage = 'server membership lookup';
     await memberFor(profile);
+    stage = 'session storage';
     await remove(sessionKey(req));
     await session(res, profile, true);
     return redirect(res, party ? '/?party=' + party : '/');
   } catch (error) {
+    console.error('Discord sign-in failed', JSON.stringify({
+      stage, status: error instanceof Problem ? error.status : 500,
+      upstreamStatus: error instanceof Problem ? error.upstreamStatus : undefined
+    }));
     return redirect(res, '/?login=' + (error.status === 403 ? 'server' : 'failed'));
   }
 }

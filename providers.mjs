@@ -1,7 +1,8 @@
 export class Problem extends Error {
-  constructor(status, message) {
+  constructor(status, message, upstreamStatus) {
     super(message);
     this.status = status;
+    this.upstreamStatus = upstreamStatus;
   }
 }
 
@@ -20,10 +21,11 @@ export async function request(url, options = {}, service) {
     throw new Problem(502, service + ' could not be reached. Try again shortly.');
   }
   if (!response.ok) {
-    if (response.status === 429) throw new Problem(429, service + ' is rate limiting requests. Try again shortly.');
-    if (response.status === 404) throw new Problem(404, service + ' could not find that record.');
-    if (response.status === 403) throw new Problem(403, service + ' denied access. Check the bot permissions and channel.');
-    throw new Problem(502, service + ' returned an error. Check the integration configuration.');
+    const status = response.status;
+    if (status === 429) throw new Problem(429, service + ' is rate limiting requests. Try again shortly.', status);
+    if (status === 404) throw new Problem(404, service + ' could not find that record.', status);
+    if (status === 403) throw new Problem(403, service + ' denied access. Check the bot permissions and channel.', status);
+    throw new Problem(502, service + ' returned an error. Check the integration configuration.', status);
   }
   try {
     return await response.json();
