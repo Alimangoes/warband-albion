@@ -1758,10 +1758,12 @@ async function routes(req, res) {
     if (!ctx) return json(res, { demo, signedIn: false, multiServer, ...(multiServer ? { inviteUrl: discordInviteUrl() } : {}) });
     if (ctx.loginError) return json(res, { demo, signedIn: false, loginError: ctx.loginError });
     const { settings, profile, character, member, expertise, availableRoles } = ctx;
+    const canSwitchWorkspace = multiServer && (profile.servers || []).filter(server => allowedServer(server.id)).length > 1 &&
+      (await workspacesFor(profile)).filter(server => server.installed).length > 1;
     const requireMatchingNickname = requiresMatchingNickname(settings);
     const onboarding = onboardingStep(ctx);
     if (onboarding) {
-      return json(res, { signedIn: true, onboarding, multiServer, expertise, expertiseRoles: availableRoles,
+      return json(res, { signedIn: true, onboarding, multiServer, canSwitchWorkspace, expertise, expertiseRoles: availableRoles,
         guild: settings?.albionGuild?.name, region: settings?.region, requireMatchingNickname,
         guest: ctx.guest,
         guildError: character && onboarding === 'character' && settings?.albionGuild
@@ -1772,7 +1774,7 @@ async function routes(req, res) {
     const viewer = await partyViewerCharacter(ctx, parties).catch(() => null);
     const boardSettings = settings && !ctx.manager && !member.admin
       ? { region: settings.region, channel: settings.channel, albionGuild: settings.albionGuild } : settings;
-    return json(res, { demo, multiServer, workspaceId: multiServer ? serverId() : undefined, settings: boardSettings, guestsEnabled: Boolean(settings?.guestRoleId), requireMatchingNickname,
+    return json(res, { demo, multiServer, canSwitchWorkspace, workspaceId: multiServer ? serverId() : undefined, settings: boardSettings, guestsEnabled: Boolean(settings?.guestRoleId), requireMatchingNickname,
       profile: { name: profile.name, avatarUrl: member.avatarUrl ?? null }, character, signedIn: true,
       expertise: ctx.expertise, expertiseRoles: availableRoles,
       mentionRoles: ctx.manager ? mentionChoices(ctx) : [],

@@ -208,7 +208,7 @@ const settingsSnapshot = board => JSON.stringify([board.settings, board.canConfi
   board.roles, board.server, board.expertiseRoles]);
 const profileSnapshot = board => JSON.stringify([board.profile, board.character, board.roles, board.expertise,
   board.expertiseRoles, board.settings?.region]);
-const onboardingSnapshot = board => JSON.stringify([board.guild, board.region, board.guest, board.guildError, board.expertise, board.expertiseRoles, board.workspaces]);
+const onboardingSnapshot = board => JSON.stringify([board.guild, board.region, board.guest, board.guildError, board.expertise, board.expertiseRoles, board.workspaces, board.canSwitchWorkspace]);
 let renderedSettings;
 let renderedProfile;
 const nextRosterRefresh = new Map();
@@ -373,7 +373,7 @@ function updateProfileBadges(board) {
 }
 function shell() {
   const board = state.board;
-  $('#workspace-switch').hidden = !board.multiServer;
+  $('#workspace-switch').hidden = !board.canSwitchWorkspace;
   updateOrganizerNav(board);
   updateProfileAvatar(board);
   $('#mode').hidden = !board.demo;
@@ -667,7 +667,7 @@ function workspaceChoices(servers, inviteUrl) {
     '<p class="error" role="alert"></p></section>';
 }
 function onboardingPage(board) {
-  const signOut = (board.multiServer && board.onboarding !== 'workspace' ? button('Switch server', 'data-switch-workspace') : '') + button('Sign out', 'data-onboarding-logout');
+  const signOut = (board.canSwitchWorkspace && board.onboarding !== 'workspace' ? button('Switch server', 'data-switch-workspace') : '') + button('Sign out', 'data-onboarding-logout');
   if (board.onboarding === 'workspace') {
     view.innerHTML = heading('Choose a Discord server', 'Open a server workspace or invite Warband to get started.') +
       workspaceChoices(board.workspaces || [], board.inviteUrl) + '<div class="actions profile-roles">' + signOut + '</div>';
