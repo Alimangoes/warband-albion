@@ -1376,11 +1376,11 @@ function showParty(id) {
     const mine = people.some(entry => entry.mine);
     const waiting = (party.waitlist || []).filter(entry => entry.role === index);
     const myWait = waiting.find(entry => entry.mine);
-    const full = people.length + waiting.filter(entry => entry.offered).length >= role.count || waiting.some(entry => !entry.mine);
+    const full = people.length >= role.count || waiting.length > 0;
     const control = closed ? '' : mine ? button('Leave', 'data-action="leave"') :
-      myWait && !myWait.offered ? button('Leave waitlist', 'data-action="leave-waitlist"') :
-      button(myWait?.offered ? 'Accept slot' : full ? 'Join waitlist' : 'Claim slot',
-        'data-action="' + (myWait?.offered || !full ? 'join' : 'waitlist') + '" data-role="' + index + '"', myWait?.offered ? 'primary' : 'outline');
+      myWait ? button('Leave waitlist', 'data-action="leave-waitlist"') :
+      button(full ? 'Join waitlist' : 'Claim slot',
+        'data-action="' + (full ? 'waitlist' : 'join') + '" data-role="' + index + '"', 'outline');
     const signupList = mayManage && !closed && people.length ?
       '<ul class="detail-signups">' + people.map(entry =>
         '<li><small>' + esc(entry.name) + (entry.mine ? ' (you)' : '') + '</small>' +
@@ -1389,10 +1389,11 @@ function showParty(id) {
         '</li>').join('') + '</ul>' :
       '<small>' + (people.map(entry => esc(entry.name) + (entry.mine ? ' (you)' : '')).join(', ') || 'Available') + '</small>';
     const waitlist = waiting.length ? '<section class="role-waitlist" aria-label="' + esc(role.name) + ' waitlist"><div class="waitlist-heading">' +
-      icon('users') + '<strong>Waitlist · ' + esc(role.name) + '</strong><span>' + waiting.length + '</span></div><ol>' +
-      waiting.map((entry, position) => '<li' + (entry.offered ? ' class="slot-offered"' : '') + '><span class="waitlist-person"><strong>' +
-        esc(entry.name) + (entry.mine ? ' (you)' : '') + '</strong><small>' + (entry.offered ? 'Slot offered · Ready to accept' : 'Waiting · Position ' + (position + 1)) +
-        '</small></span>' + (!closed && entry.mine && entry.offered ? button('Decline', 'data-action="leave-waitlist"') : '') +
+      icon('users') + '<strong>Waitlist · ' + esc(role.name) + '</strong><span>' + waiting.length + '</span></div>' +
+      '<p class="hint">First come, first served. Open slots are assigned automatically.</p><ol>' +
+      waiting.map((entry, position) => '<li><span class="waitlist-person"><strong>' +
+        esc(entry.name) + (entry.mine ? ' (you)' : '') + '</strong><small>Waiting · Position ' + (position + 1) +
+        '</small></span>' +
         (!closed && mayManage && entry.signupId ? button('Remove', 'data-action="remove-waitlist" data-signup-id="' + esc(entry.signupId) +
           '" data-signup-name="' + esc(entry.name) + '" aria-label="Remove ' + esc(entry.name) + ' from waitlist"', 'outline danger') : '') +
         '</li>').join('') + '</ol></section>' : '';

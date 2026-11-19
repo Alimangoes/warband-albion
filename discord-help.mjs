@@ -10,7 +10,7 @@ export const helpTopics = {
     '1. Open **Party Board** and click or tap a party card. Filter by **All parties**, **Open slots**, or **My signups**.',
     '2. Check the start time, meetup location, and notes. Hover over or focus a recommended gear icon for item details.',
     '3. **Claim slot** or tap a Discord role to join. Claim another role to switch. Tap your current Discord role again, **Leave party**, or **Leave** on the website to release it.',
-    '4. Full roles offer **Join waitlist**; tapping a full Discord role queues you too. Names and requested roles appear on both platforms. The next eligible player gets a reserved offer: **Accept slot** or tap the role in Discord. **Decline**, **Leave waitlist**, or Discord **Leave party** releases the offer. Up to 20 players can wait per party.',
+    '4. **Join waitlist** or tap a full Discord role to queue. Each role is first come, first served. When a slot opens, the first eligible player is assigned automatically; no acceptance is needed. Names and positions appear on both platforms. **Leave waitlist** or Discord **Leave party** exits the queue. Up to 20 players can wait per party.',
     '5. **My signups** includes waitlists. Scheduled signups close at start time. **Start party** locks claims and waitlists when an organizer begins the run.'
   ].join('\n') },
   profile: { title: 'Profile and guild members', description: [
@@ -24,7 +24,7 @@ export const helpTopics = {
     '2. Add named roles with up to **20 total slots**, plus recommended gear, tier, enchantment and quality.',
     '3. Choose guild eligibility, a public Discord thread and roles to mention. **Publish party** posts the announcement.',
     '4. Click the party card to edit, retry an announcement, or **Remove** a claim or waitlist entry. **Ping roster** mentions signed-up players. The first full roster triggers a gear reminder.',
-    '5. **Start party** on the website or Discord locks the roster, even with empty slots. Only organizers can start. The party thread records joins, switches, departures, offers and organizer actions.',
+    '5. **Start party** on the website or Discord locks the roster, even with empty slots. Only organizers can start. The party thread records joins, switches, departures, automatic assignments and organizer actions.',
     '• **/warband-assign party: player: role:** assigns or moves a registered player to an available slot. Select party and role suggestions. Normal sign-in and guild requirements apply.',
     '• **/warband-remove party: player:** frees the selected player’s slot. Both organizer commands update Warband and the announcement.',
     '6. **Finish** keeps the roster. **Cancel party** closes the run. **Delete** removes the party and linked thread with **Manage Threads** permission.'

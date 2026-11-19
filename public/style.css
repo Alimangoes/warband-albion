@@ -450,11 +450,9 @@ dialog:has(.guild-profile-dialog) .dialog-head > .button { flex: none; }
 .waitlist-heading > span { margin-left: auto; min-width: 22px; padding: 2px 6px; border-radius: 5px; background: var(--raised); text-align: center; }
 .role-waitlist ol { display: grid; gap: 6px; padding: 0; margin: 9px 0 0; list-style: none; }
 .role-waitlist li { display: flex; align-items: center; gap: 8px; padding: 9px 11px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; flex-wrap: wrap; }
-.role-waitlist .slot-offered { border-color: var(--accent-border); background: var(--accent-surface); }
 .waitlist-person { flex: 1; min-width: 110px; }
 .waitlist-person strong { font-size: 13px; }
 .waitlist-person small { color: var(--muted); font-size: 11px; margin-top: 2px; }
-.slot-offered .waitlist-person small { color: var(--accent); }
 .role-waitlist .button { min-height: 30px; padding: 4px 8px; font-size: 12px; }
 .toast { position: fixed; z-index: 2; bottom: 20px; right: 16px; max-width: min(440px, 90vw); padding: 12px 16px; background: #302331; border: 1px solid #654756; border-radius: 8px; }
 @media (max-width: 425px) {

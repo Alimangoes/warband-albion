@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server.mjs",
     "check": "node --check server.mjs && node --check api/warband.mjs && node --check storage.mjs && node --check public/app.js && node --check providers.mjs && node --check demo.mjs && node --check discord-guide.mjs && node --check discord-cache.mjs",
-    "test": "node --test tests/discord-cache.test.mjs && node tests/multi-server.integration.mjs && node tests/multi-server.integration.mjs --open-servers"
+    "test": "node --test tests/discord-cache.test.mjs && node tests/multi-server.integration.mjs && node tests/multi-server.integration.mjs --open-servers && node tests/waitlist.integration.mjs"
   },
   "dependencies": {
     "@vercel/functions": "^3.11.3",
