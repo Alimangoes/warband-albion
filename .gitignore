@@ -1,6 +1,28 @@
+# Local credentials and configuration
 .env
 .env.*
 !.env.example
-.vercel/
-data/
+
+# Installed dependencies and Vercel workspace metadata
 node_modules/
+.vercel/
+
+# Local application data
+/data/
+
+# Browser automation output and temporary test fixtures
+/.playwright-cli/
+/playwright-report/
+/test-results/
+/blob-report/
+/coverage/
+
+# Logs and process files
+*.log
+*.pid
+*.pid.lock
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
