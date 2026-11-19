@@ -7,10 +7,11 @@ export const helpTopics = {
     '4. Select your play roles and **Save roles** to reach the board. On mobile, navigate with the bottom icons. Organizers also see Settings.'
   ].join('\n') },
   signups: { title: 'Find and join a party', description: [
-    '1. Open **Party Board**, filter by **All parties**, **Open slots**, or **My signups**, then select **View party**.',
+    '1. Open **Party Board** and click or tap a party card. Filter by **All parties**, **Open slots**, or **My signups**.',
     '2. Check the start time, meetup location, and notes. Hover over or focus a recommended gear icon for item details.',
-    '3. Click **Claim slot** on the website or tap a role on the Discord announcement. You can hold one slot per party. Claim a different available role to switch. To release your slot, tap your current role again or use **Leave party** in Discord, or click **Leave** on the website.',
-    '4. Use **My signups** to find your parties. Scheduled signups close at the start time. Parties set to **Wait until full** show **Ready** once all slots are filled. An organizer can close either type of party.'
+    '3. **Claim slot** or tap a Discord role to join. Claim another role to switch. Tap your current Discord role again, **Leave party**, or **Leave** on the website to release it.',
+    '4. Full roles offer **Join waitlist**; tapping a full Discord role queues you too. Names and requested roles appear on both platforms. The next eligible player gets a reserved offer: **Accept slot** or tap the role in Discord. **Decline**, **Leave waitlist**, or Discord **Leave party** releases the offer. Up to 20 players can wait per party.',
+    '5. **My signups** includes waitlists. Scheduled signups close at start time. **Start party** locks claims and waitlists when an organizer begins the run.'
   ].join('\n') },
   profile: { title: 'Profile and guild members', description: [
     '• In **Profile**, refresh your linked character, change your play roles, or sign out. **Save roles** syncs roles managed by Warband to Discord. Unlinking clears those selections and removes the assigned Warband roles.',
@@ -19,15 +20,14 @@ export const helpTopics = {
     '• The crown marks the configured guild master. The checkmark marks a linked Warband account. The scales mark organizer access.'
   ].join('\n') },
   organize: { title: 'Create and manage parties', description: [
-    '1. Select **Create party** on the board. Enter the name, activity, meetup location, and any notes. Choose a future start time or turn on **Wait until full**.',
-    '2. Add named roles with up to **20 total slots**. Add optional recommended gear using the item search, tier, enchantment, and quality controls.',
-    '3. Choose whether to require Albion guild membership, post the Discord announcement in a public thread, or mention selected Discord roles.',
-    '4. Click **Publish party** to add it to the board and announce it. Open the party to edit it or retry a failed announcement.',
-    '5. Use **Ping roster** on the party card to mention everyone with a claimed slot in its Discord thread. Warband also posts a gear-up reminder in the thread the first time every slot is filled.',
-    '6. Open **View party** and click **Remove** beside a signup to free a member or guest’s slot and update the Discord announcement.',
+    '1. **Create party**, enter the activity, meetup and notes, then choose a future time or **Wait until full**.',
+    '2. Add named roles with up to **20 total slots**, plus recommended gear, tier, enchantment and quality.',
+    '3. Choose guild eligibility, a public Discord thread and roles to mention. **Publish party** posts the announcement.',
+    '4. Click the party card to edit, retry an announcement, or **Remove** a claim or waitlist entry. **Ping roster** mentions signed-up players. The first full roster triggers a gear reminder.',
+    '5. **Start party** on the website or Discord locks the roster, even with empty slots. Only organizers can start. The party thread records joins, switches, departures, offers and organizer actions.',
     '• **/warband-assign party: player: role:** assigns or moves a registered player to an available slot. Select party and role suggestions. Normal sign-in and guild requirements apply.',
     '• **/warband-remove party: player:** frees the selected player’s slot. Both organizer commands update Warband and the announcement.',
-    '7. **Finish** closes signups and keeps the roster. **Cancel party** closes the run. **Delete** removes the party and its linked Discord thread when the bot has **Manage Threads**.'
+    '6. **Finish** keeps the roster. **Cancel party** closes the run. **Delete** removes the party and linked thread with **Manage Threads** permission.'
   ].join('\n') },
   templates: { title: 'Templates and /warband', description: [
     '• Use **Save template** in the party form. Templates are shared by all organizers. Open **Templates** to reuse, edit, or delete one. Saving an opened template updates that template, including its saved start time.',

@@ -86,10 +86,10 @@ let pendingWrites = 0;
 let boardVersion = 0;
 const localDate = date => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', weekday: 'short' }).format(new Date(date));
 const localTime = date => new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(date));
-const ended = party => party.cancelled || party.finished || (!party.waitUntilFull && Date.parse(party.starts) <= Date.now());
+const ended = party => Boolean(party.cancelled || party.finished || party.startedAt || (!party.waitUntilFull && Date.parse(party.starts) <= Date.now()));
 const fillStatus = party => party.signups.length === capacity(party) ? 'Ready · All slots filled' : 'Waiting for slots';
 const capacity = party => party.roles.reduce((total, role) => total + role.count, 0);
-const mine = party => party.signups.some(entry => entry.mine);
+const mine = party => party.signups.some(entry => entry.mine) || party.waitlist?.some(entry => entry.mine);
 const regionOptions = selected => Object.entries(regions)
   .map(([id, label]) => '<option value="' + id + '"' + (id === selected ? ' selected' : '') + '>' + label + '</option>').join('');
 const button = (label, action, classes = 'outline') => '<button type="button" class="button ' + classes + '" ' + action + '>' + label + '</button>';
@@ -163,14 +163,14 @@ function refreshViewKeepingFocus(container, redraw) {
     control.matches('button, a[href]') ? control.textContent.trim() : '']);
   const focused = container.contains(active) && active.matches(controls);
   const row = focused && active.closest('.party');
-  const partyId = row && $('[data-party]', row)?.dataset.party;
+  const partyId = row?.dataset.party;
   const key = focused && controlKey(active);
   const selection = focused && active.selectionStart != null && [active.selectionStart, active.selectionEnd];
   const scroll = container.scrollTop;
   redraw();
   if (focused) {
     const candidates = partyId ? [...container.querySelectorAll('.party')].find(item =>
-      $('[data-party]', item)?.dataset.party === partyId)?.querySelectorAll(controls) : container.querySelectorAll(controls);
+      item.dataset.party === partyId)?.querySelectorAll(controls) : container.querySelectorAll(controls);
     const replacement = [...(candidates || [])].find(control => controlKey(control) === key);
     replacement?.focus({ preventScroll: true });
     if (selection) replacement?.setSelectionRange(...selection);
@@ -399,17 +399,21 @@ function partyRow(party) {
   const status = party.cancelled ? 'Cancelled' : party.finished ? 'Finished' : ended(party) ? 'Started' :
     party.waitUntilFull ? (count === total ? 'Ready' : 'Waiting') : count === total ? 'Full' : 'Open';
   const statusClass = ended(party) ? 'closed' : count === total ? 'full' : '';
-  return '<article class="party"><div class="party-identity"><span class="party-icon ' + color + '">' + icon(symbol) +
+  return '<article class="party" data-party="' + esc(party.id) + '"><a class="party-card-link" href="/?party=' + esc(party.id) +
+    '" data-open-party="' + esc(party.id) + '" aria-label="View party: ' + esc(party.title) + '"></a>' +
+    '<div class="party-identity"><span class="party-icon ' + color + '">' + icon(symbol) +
     '</span><div><h3>' + unreadDot(state.page, party.id) + esc(party.title) + '</h3><p>' + esc(party.type) + ' <span aria-hidden="true">·</span> ' + esc(party.zone) +
-    '</p></div></div><div class="party-time">' + (party.waitUntilFull ? '<strong>Wait until full</strong>' :
+    '</p><div class="party-time">' + (party.waitUntilFull ? '<strong>Wait until full</strong>' :
       '<strong>' + esc(localDate(party.starts)) + '</strong><small>' + esc(localTime(party.starts)) + '</small>') +
-    '</div><div class="party-slots"><strong>' + count + ' / ' + total +
+    '</div></div></div><div class="party-slots"><strong>' + count + ' / ' + total +
     ' slots</strong><progress class="progress" aria-label="Filled party slots" max="' + total + '" value="' + count + '"></progress></div>' +
     '<span class="status ' + statusClass + '"><i></i>' + status + '</span>' +
-    '<div class="actions party-actions">' + button('View party ' + icon('chevron'), 'data-party="' + esc(party.id) + '"') +
+    '<div class="actions party-actions">' +
     (state.board.canManage ? (party.canPingRoster ? button('Ping roster', 'data-list-action="ping"') : '') +
+      (!party.startedAt && !party.cancelled && !party.finished && count ? button('Start party', 'data-list-action="start"', 'primary') : '') +
       (!party.cancelled && !party.finished ? button('Finish', 'data-list-action="finish"') : '') +
-      button('Delete', 'data-list-action="delete"', 'outline danger') : '') + '</div></article>';
+      button('Delete', 'data-list-action="delete"', 'outline danger') : '') +
+    '</div><span class="party-chevron" aria-hidden="true"><svg viewBox="0 0 24 32" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m6 4 12 12-12 12"/></svg></span></article>';
 }
 function boardPage(board) {
   renderedSnapshot = partySnapshot(board);
@@ -997,13 +1001,13 @@ function setupAlbionProfile(panel, memberId, guests) {
   tabs.forEach(button => button.addEventListener('click', () => select(button.dataset.profileTab)));
   select('kills');
 }
-function expertiseForm(board, partyId = '', role = '') {
+function expertiseForm(board, partyId = '', role = '', action = 'join') {
   return '<form class="form-grid' + (partyId ? ' dialog-body' : '') + '" data-form="expertise" data-join-party="' +
-    esc(partyId) + '" data-join-role="' + esc(role) + '"><fieldset class="expertise"><legend>Select all that apply</legend>' +
+    esc(partyId) + '" data-join-role="' + esc(role) + '" data-join-action="' + esc(action) + '"><fieldset class="expertise"><legend>Select all that apply</legend>' +
     board.expertiseRoles.map(name => '<label class="check"><input type="checkbox" name="expertise" value="' + esc(name) +
       '"' + (board.expertise.includes(name) ? ' checked' : '') + '>' + esc(name) + '</label>').join('') +
     '</fieldset>' + errorLine + '<div class="actions"><button class="button primary">' +
-    (partyId ? 'Save roles and claim slot' : 'Save roles') + '</button></div></form>';
+    (partyId ? action === 'waitlist' ? 'Save roles and join waitlist' : 'Save roles and claim slot' : 'Save roles') + '</button></div></form>';
 }
 const buildSlots = { weapon: 'Weapon', offhand: 'Offhand', head: 'Head piece', chest: 'Chest piece',
   feet: 'Foot piece', cape: 'Cape', food: 'Food', potion: 'Potion' };
@@ -1115,6 +1119,18 @@ function showDialog(html) {
   dialog.innerHTML = html;
   if (!dialog.open) dialog.showModal();
 }
+let backdropDialog;
+const outsideDialog = (dialog, event) => {
+  const rect = dialog.getBoundingClientRect();
+  return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+};
+document.addEventListener('pointerdown', event => {
+  backdropDialog = event.target instanceof HTMLDialogElement && outsideDialog(event.target, event) ? event.target : null;
+});
+document.addEventListener('click', event => {
+  if (backdropDialog === event.target && backdropDialog?.open && outsideDialog(backdropDialog, event)) backdropDialog.close();
+  backdropDialog = null;
+});
 dialog.addEventListener('close', () => {
   if (!dialog.open) {
     stopCombatRefresh?.();
@@ -1300,9 +1316,13 @@ function showParty(id) {
   const detail = party.roles.map((role, index) => {
     const people = party.signups.filter(entry => entry.role === index);
     const mine = people.some(entry => entry.mine);
-    const full = people.length >= role.count;
+    const waiting = (party.waitlist || []).filter(entry => entry.role === index);
+    const myWait = waiting.find(entry => entry.mine);
+    const full = people.length + waiting.filter(entry => entry.offered).length >= role.count || waiting.some(entry => !entry.mine);
     const control = closed ? '' : mine ? button('Leave', 'data-action="leave"') :
-      button(full ? 'Full' : 'Claim slot', 'data-action="join" data-role="' + index + '"' + (full ? ' disabled' : ''));
+      myWait && !myWait.offered ? button('Leave waitlist', 'data-action="leave-waitlist"') :
+      button(myWait?.offered ? 'Accept slot' : full ? 'Join waitlist' : 'Claim slot',
+        'data-action="' + (myWait?.offered || !full ? 'join' : 'waitlist') + '" data-role="' + index + '"', myWait?.offered ? 'primary' : 'outline');
     const signupList = mayManage && !closed && people.length ?
       '<ul class="detail-signups">' + people.map(entry =>
         '<li><small>' + esc(entry.name) + (entry.mine ? ' (you)' : '') + '</small>' +
@@ -1310,8 +1330,16 @@ function showParty(id) {
           '" data-signup-name="' + esc(entry.name) + '" aria-label="Remove ' + esc(entry.name) + ' from party"', 'outline danger') : '') +
         '</li>').join('') + '</ul>' :
       '<small>' + (people.map(entry => esc(entry.name) + (entry.mine ? ' (you)' : '')).join(', ') || 'Available') + '</small>';
+    const waitlist = waiting.length ? '<section class="role-waitlist" aria-label="' + esc(role.name) + ' waitlist"><div class="waitlist-heading">' +
+      icon('users') + '<strong>Waitlist · ' + esc(role.name) + '</strong><span>' + waiting.length + '</span></div><ol>' +
+      waiting.map((entry, position) => '<li' + (entry.offered ? ' class="slot-offered"' : '') + '><span class="waitlist-person"><strong>' +
+        esc(entry.name) + (entry.mine ? ' (you)' : '') + '</strong><small>' + (entry.offered ? 'Slot offered · Ready to accept' : 'Waiting · Position ' + (position + 1)) +
+        '</small></span>' + (!closed && entry.mine && entry.offered ? button('Decline', 'data-action="leave-waitlist"') : '') +
+        (!closed && mayManage && entry.signupId ? button('Remove', 'data-action="remove-waitlist" data-signup-id="' + esc(entry.signupId) +
+          '" data-signup-name="' + esc(entry.name) + '" aria-label="Remove ' + esc(entry.name) + ' from waitlist"', 'outline danger') : '') +
+        '</li>').join('') + '</ol></section>' : '';
     return '<div class="detail-role"><div class="detail-role-info"><strong>' + esc(role.name) + ' · ' + people.length + '/' + role.count +
-      '</strong>' + signupList + '</div>' + showBuild(role.build, index) + control + '</div>';
+      '</strong>' + signupList + '</div>' + showBuild(role.build, index) + control + waitlist + '</div>';
   }).join('');
   const announcement = party.announcement === 'demo' ? 'Demo announcement · #' + party.channel :
     party.announcement === 'sent' ? 'Announced in #' + party.channel :
@@ -1324,12 +1352,13 @@ function showParty(id) {
     '</strong><br><span class="hint">' + esc(party.zone + ' · Hosted by ' + party.host) + '</span></p>' +
     (party.summary ? '<p>' + esc(party.summary) + '</p>' : '') +
     (party.guildOnly ? '<p class="hint">Guild only · ' + esc(party.guild) + '</p>' : '') +
-    (closed ? '<p class="status closed">' + (party.cancelled ? 'Cancelled' : party.finished ? 'Finished' : 'Signups closed') + '</p>' : '') +
+    (closed ? '<p class="status closed">' + (party.cancelled ? 'Cancelled' : party.finished ? 'Finished' : party.startedAt ? 'Started · Roster locked' : 'Signups closed') + '</p>' : '') +
     '<div class="detail-roles">' + detail + '</div><p class="hint">' + esc(announcement) + '</p>' + errorLine +
     '<div class="actions">' + (party.messageUrl ? '<a class="button outline" href="' + esc(party.messageUrl) +
     '" target="_blank" rel="noopener noreferrer">Open Discord announcement</a>' : '') +
     (retry ? button('Retry announcement', 'data-action="retry"') : '') +
-    (mayManage && !party.cancelled && !party.finished ? button('Edit party', 'data-edit-party="' + esc(id) + '"') : '') +
+    (mayManage && !party.startedAt && !party.cancelled && !party.finished ?
+      (party.signups.length ? button('Start party', 'data-action="start"', 'primary') : '') + button('Edit party', 'data-edit-party="' + esc(id) + '"') : '') +
     (mayManage && !closed ? button('Cancel party', 'data-action="cancel"', 'outline danger') : '') + '</div></div>'));
 }
 let pageMotion;
@@ -1439,7 +1468,7 @@ document.addEventListener('submit', event => {
       const result = await api('expertise', { roles: selected });
       state.board.expertise = selected;
       if (form.dataset.joinParty) {
-        const party = await api('party/action', { id: form.dataset.joinParty, action: 'join', role: Number(form.dataset.joinRole) });
+        const party = await api('party/action', { id: form.dataset.joinParty, action: form.dataset.joinAction || 'join', role: Number(form.dataset.joinRole) });
         saveResult(party);
         await render();
         showParty(party.id);
@@ -1449,7 +1478,7 @@ document.addEventListener('submit', event => {
         await render();
         if (completingOnboarding) openRequestedParty();
       }
-      toast((form.dataset.joinParty ? 'Slot claimed.' : 'Roles saved.') +
+      toast((form.dataset.joinParty ? form.dataset.joinAction === 'waitlist' ? 'Added to the waitlist.' : 'Slot claimed.' : 'Roles saved.') +
         (result.synced ? '' : result.reason === 'setup' ? ' A Discord admin needs to configure role sync.' :
           ' Discord role sync was incomplete. Save your roles again to retry.'));
       return;
@@ -1525,6 +1554,12 @@ view.addEventListener('change', event => {
   group.disabled = !enabled;
 });
 document.addEventListener('click', async event => {
+  const partyLink = event.target.closest('[data-open-party]');
+  if (partyLink && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey && event.button === 0) {
+    event.preventDefault();
+    if (state.board) showParty(partyLink.dataset.openParty);
+    return;
+  }
   const login = event.target.closest('[data-discord-login]');
   if (login && event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
     if (login.hasAttribute('aria-busy')) event.preventDefault();
@@ -1596,32 +1631,38 @@ document.addEventListener('click', async event => {
   }
   if (el.dataset.action) {
     const container = el.closest('[data-active-party]');
-    if (el.dataset.action === 'join' && state.board.expertiseRoles.length && !state.board.expertise.length) {
-      showDialog(layout('Choose your roles', expertiseForm(state.board, container.dataset.activeParty, el.dataset.role)));
+    if (['join', 'waitlist'].includes(el.dataset.action) && state.board.expertiseRoles.length && !state.board.expertise.length) {
+      showDialog(layout('Choose your roles', expertiseForm(state.board, container.dataset.activeParty, el.dataset.role, el.dataset.action)));
       return;
     }
     if (el.dataset.action === 'cancel' && !window.confirm('Cancel this party and close signups?')) return;
-    const removingSignup = el.dataset.action === 'remove-signup';
+    if (el.dataset.action === 'start' && !window.confirm('Start this party and lock the roster? New claims and waitlist changes will close.')) return;
+    const removingSignup = ['remove-signup', 'remove-waitlist'].includes(el.dataset.action);
     if (removingSignup && !window.confirm('Remove ' + el.dataset.signupName + ' from this party?')) return;
     await formTask(container, el, async () => {
       const party = await api('party/action', { id: container.dataset.activeParty, action: el.dataset.action,
         ...(removingSignup ? { signupId: el.dataset.signupId } : { role: Number(el.dataset.role) }) });
+      const reopen = dialog.open && container.isConnected;
       saveResult(party);
       await render();
-      showParty(party.id);
+      if (reopen) showParty(party.id);
       if (el.dataset.action === 'join') toast('Slot claimed.');
       if (el.dataset.action === 'leave') toast('Slot released.');
       if (el.dataset.action === 'cancel') toast('Party cancelled.');
-      if (removingSignup) toast(el.dataset.signupName + ' was removed from the party.' +
+      if (el.dataset.action === 'start') toast('Party started. The roster is locked.');
+      if (el.dataset.action === 'waitlist') toast('Added to the waitlist.');
+      if (el.dataset.action === 'leave-waitlist') toast('You left the waitlist.');
+      if (removingSignup) toast(el.dataset.signupName + (el.dataset.action === 'remove-waitlist' ? ' was removed from the waitlist.' : ' was removed from the party.') +
         (party.announcement === 'failed' ? ' Discord announcement update failed.' : ''));
     });
   }
   if (el.dataset.listAction) {
     const { listAction: action } = el.dataset;
-    const id = $('[data-party]', el.closest('.party')).dataset.party;
+    const id = el.closest('.party').dataset.party;
     const prompt = {
       delete: 'Permanently delete this party, its signups, and any linked Discord thread?',
       finish: 'Finish this party and close signups?',
+      start: 'Start this party and lock the roster? New claims and waitlist changes will close.',
       ping: 'Mention everyone who claimed a slot in this party’s Discord thread?'
     };
     if (!window.confirm(prompt[action])) return;
@@ -1639,7 +1680,7 @@ document.addEventListener('click', async event => {
         markItemRead('mine', id);
       } else saveResult(party);
       await render();
-      toast(party.deleted ? 'Party deleted.' : 'Party finished.');
+      toast(party.deleted ? 'Party deleted.' : action === 'start' ? 'Party started. The roster is locked.' : 'Party finished.');
     } catch (error) {
       toast(error.message);
     } finally {

@@ -672,8 +672,10 @@ function findParty(parties, id) {
 }
 const signupRef = (party, signup) => signup.claimId ?? hash(party.id + ':' + signup.user + ':' + signup.role).slice(0, 22);
 function visible(party, ctx) {
-  const { nonce, postingAt, deletingAt, gearReminder, rosterChanged, channelId, guildId: target, region, hostId, signups, ...fields } = party;
+  const { nonce, postingAt, deletingAt, gearReminder, threadActivity, announcementVersion, waitlist = [], rosterChanged, channelId, guildId: target, region, hostId, signups, ...fields } = party;
   return { ...fields, canPingRoster: Boolean(ctx.manager && canPingRoster(party)),
+    waitlist: waitlist.map(entry => ({ name: entry.name, role: entry.role, offered: Boolean(entry.offered), mine: entry.user === ctx.profile.id,
+      ...(ctx.manager ? { signupId: entry.id } : {}) })),
     signups: signups.map(signup => ({ name: signup.name, role: signup.role, mine: signup.user === ctx.profile.id,
       ...(ctx.manager ? { signupId: signupRef(party, signup) } : {}) })) };
 }
@@ -728,7 +730,7 @@ function partySchedule(data, current) {
       when > Date.now() + 366 * 86400000) throw new Problem(400, 'Choose a future time within the next year.');
   return new Date(when).toISOString();
 }
-const partyClosed = party => party.cancelled || party.finished || (!party.waitUntilFull && Date.parse(party.starts) <= Date.now());
+const partyClosed = party => party.cancelled || party.finished || party.startedAt || (!party.waitUntilFull && Date.parse(party.starts) <= Date.now());
 const mentionChoices = ctx => demo ? demoRoles : ctx.member.allRoles
   .filter(role => role.id !== guildId && !role.managed).map(({ id, name }) => ({ id, name }))
   .sort((a, b) => a.name.localeCompare(b.name));
@@ -788,6 +790,107 @@ function canPingRoster(party) {
   return !party.finished && !party.cancelled && (demo ? party.announcementThread && party.signups.length :
     partyThread(party) && rosterPingUsers(party).length);
 }
+const roleClaims = (party, role) => party.signups.filter(entry => entry.role === role).length;
+const roleOffers = (party, role) => (party.waitlist || []).filter(entry => entry.role === role && entry.offered).length;
+const partyPerson = (user, name) => snowflake(user) ? '<@' + user + '>' : discordText(name || 'Member');
+function partyActivity(party, text, users = []) {
+  if (demo || (!party.threadId && !party.announcementThread)) return;
+  party.threadActivity ??= [];
+  party.threadActivity.push({ id: key(), text, users });
+}
+async function deliverPartyActivity(ctx, id) {
+  if (demo) return;
+  try {
+    await withRecordLock(db, ctx.scope + ':party-activity:' + id, 'Party activity is already syncing.', async () => {
+      for (let i = 0; i < 20; i++) {
+        const party = (await partiesFor(ctx)).find(item => item.id === id);
+        const event = party?.threadActivity?.[0];
+        if (!event || !partyThread(party) || deletionBusy(party)) return;
+        await discord('/channels/' + party.threadId + '/messages', bot, {
+          ...(event.users.length ? { content: event.users.map(user => '<@' + user + '>').join(' ') } : {}),
+          embeds: [{ color: 0xeab77b, description: event.text }],
+          allowed_mentions: { parse: [], users: event.users }, nonce: event.id, enforce_nonce: true
+        });
+        await editParties(ctx, parties => {
+          const item = parties.find(party => party.id === id);
+          if (item) item.threadActivity = (item.threadActivity || []).filter(entry => entry.id !== event.id);
+        });
+      }
+    });
+  } catch (error) {
+    if (error.status !== 409) console.warn('Party thread activity delivery deferred.', { status: error.status });
+  }
+}
+async function signupCharacter(ctx, party) {
+  if (!demo && (!ctx.character || onboardingStep(ctx))) throw new Problem(409, 'Link your Albion character and save your Warband roles first.');
+  if (ctx.availableRoles.length && !ctx.expertise.length) throw new Problem(409, 'Choose your expertise roles before claiming a slot.');
+  let character = ctx.character;
+  if (party.guildOnly || (!demo && ctx.settings?.albionGuild && !ctx.guest)) {
+    if (!character) throw new Problem(403, 'Link your Albion character before claiming a slot.');
+    if (!demo) character = await characterFor(character.region, character.id);
+    if (!canViewParty(ctx, party, character)) throw new Problem(403, restrictedPartyMessage(party));
+    if (!demo && ctx.settings?.albionGuild && character.guildId !== ctx.settings.albionGuild.id) {
+      throw new Problem(403, guildMembershipError(ctx.settings.albionGuild));
+    }
+  }
+  return character;
+}
+async function offerWaitlistSlots(ctx, id) {
+  try {
+    await withRecordLock(db, ctx.scope + ':party-waitlist:' + id, 'Waitlist is already being updated.', async () => {
+      for (let i = 0; i < 20; i++) {
+        const party = (await partiesFor(ctx)).find(item => item.id === id);
+        if (!party || partyClosed(party) || deletionBusy(party)) return;
+        const entry = (party.waitlist || []).find(entry => !entry.offered && party.roles[entry.role] &&
+          roleClaims(party, entry.role) + roleOffers(party, entry.role) < party.roles[entry.role].count);
+        if (!entry) return;
+        let eligible = true;
+        try {
+          if (!demo) await signupCharacter(await discordPlayerContext({ id: entry.user, name: entry.name }), party);
+        } catch (error) {
+          if (![403, 404, 409].includes(error.status)) return;
+          eligible = false;
+        }
+        await editParties(ctx, parties => {
+          const item = findParty(parties, id);
+          if (partyClosed(item) || deletionBusy(item)) return;
+          const waiting = (item.waitlist || []).find(row => row.id === entry.id && !row.offered);
+          if (!waiting || item.roles[waiting.role]?.name !== party.roles[entry.role].name) return;
+          if (!eligible) {
+            item.waitlist = item.waitlist.filter(row => row.id !== entry.id);
+            partyActivity(item, partyPerson(entry.user, entry.name) + ' was removed from the waitlist because they no longer meet the party requirements.');
+          } else if (roleClaims(item, waiting.role) + roleOffers(item, waiting.role) < item.roles[waiting.role].count) {
+            waiting.offered = true;
+            const role = item.roles[waiting.role];
+            partyActivity(item, '**A slot is available!** ' + partyPerson(waiting.user, waiting.name) + ', your **' +
+              discordText(role.name) + '** slot is reserved. Tap that role to accept, or tap it again after joining to leave. ' +
+              'Use **Leave party** to decline the offer.', [waiting.user]);
+          }
+          item.rosterChanged = true;
+        });
+      }
+    });
+  } catch (error) {
+    if (error.status !== 409) console.warn('Party waitlist processing deferred.', { status: error.status });
+  }
+}
+async function settleParty(ctx, id) {
+  await offerWaitlistSlots(ctx, id);
+  const party = (await partiesFor(ctx)).find(item => item.id === id);
+  if (!demo && party && announcementMessageId(party)) await syncAnnouncement(ctx, id, true, true);
+  await deliverPartyActivity(ctx, id);
+}
+function queuePartyMaintenance(ctx, parties) {
+  if (demo) return;
+  const pending = parties.filter(party => party.threadActivity?.length ||
+    (!party.finished && !party.cancelled && party.announcement === 'sent' && announcementMessageId(party) && party.announcementVersion !== 2) || (!partyClosed(party) &&
+    party.waitlist?.some(entry => !entry.offered && party.roles[entry.role] &&
+      roleClaims(party, entry.role) + roleOffers(party, entry.role) < party.roles[entry.role].count))).slice(0, 2);
+  if (!pending.length) return;
+  const work = Promise.allSettled(pending.map(party => settleParty(ctx, party.id)));
+  if (onVercel) waitUntil(work);
+  else return work;
+}
 function sendRosterPing(party, nonce) {
   const users = rosterPingUsers(party);
   const text = partyFull(party) ? '**Party full!** Gear up with your role’s recommended build and get ready for the run.' :
@@ -831,10 +934,12 @@ function announcementCard(party) {
   const signupLines = party.roles.map((role, index) => {
     const signups = party.signups.filter(entry => entry.role === index);
     const names = signups.map(entry => snowflake(entry.user) ? '<@' + entry.user + '>' : discordText(entry.name || 'Member'));
+    const waiting = (party.waitlist || []).filter(entry => entry.role === index);
     return discordText(role.name) + ' - ' + signups.length + '/' + role.count +
-      (names.length ? ' | ' + names.join(', ') : '');
+      (names.length ? ' | ' + names.join(', ') : '') + (waiting.length ? '\n↳ Waitlist · ' + waiting.map(entry =>
+        partyPerson(entry.user, entry.name) + (entry.offered ? ' (slot offered)' : '')).join(', ') : '');
   });
-  const status = party.cancelled ? '**Cancelled**' : party.finished ? '**Finished**' : '';
+  const status = party.cancelled ? '**Cancelled**' : party.finished ? '**Finished**' : party.startedAt ? '**Party started · Roster locked**' : '';
   const filled = partyFull(party);
   const schedule = party.waitUntilFull ? (status ? 'No scheduled start' : filled ? '**Ready · All slots filled**' : '**Waiting for all slots to fill**') :
     '<t:' + stamp + ':F> (<t:' + stamp + ':R>)';
@@ -850,7 +955,7 @@ function announcementCard(party) {
       schedule,
       status,
       signupLines.join('\n'),
-      interactionKey && !partyClosed(party) && 'Tap a role to claim it. Tap the same role again or use **Leave party** to release your slot.',
+      interactionKey && !partyClosed(party) && 'Tap a role to join, or queue when it is full. Tap it again to leave your claim or waitlist. Accept an offered slot by tapping its role. **Leave party** clears your claim and waitlist.',
       party.guildOnly && 'Guild only · ' + discordText(party.guild),
       '[Open party in Warband](' + link + ')'
     ].filter(Boolean).join('\n\n'),
@@ -867,9 +972,15 @@ function signupButtons(party) {
       disabled
     }))
   }));
-  const leave = { type: 2, style: 4, label: 'Leave party', custom_id: 'wb:' + party.id + ':leave', disabled };
-  if (rows.at(-1)?.components.length < 5) rows.at(-1).components.push(leave);
-  else rows.push({ type: 1, components: [leave] });
+  const controls = [
+    { type: 2, style: 4, label: 'Leave party', custom_id: 'wb:' + party.id + ':leave', disabled },
+    { type: 2, style: 3, label: 'Start party', custom_id: 'wb:' + party.id + ':start',
+      disabled: Boolean(party.startedAt || party.finished || party.cancelled) }
+  ];
+  for (const control of controls) {
+    if (rows.at(-1)?.components.length < 5) rows.at(-1).components.push(control);
+    else rows.push({ type: 1, components: [control] });
+  }
   return rows;
 }
 async function announce(ctx, id, allowClosed = false, refresh = false) {
@@ -878,7 +989,7 @@ async function announce(ctx, id, allowClosed = false, refresh = false) {
     if (refresh && !announcementMessageId(item)) return null;
     if (!allowClosed && partyClosed(item) &&
         !item.messageId && !item.messageUrl) throw new Problem(409, 'This party has closed.');
-    if ((item.announcement === 'sent' && !item.rosterChanged) || announcementBusy(item)) return null;
+    if ((item.announcement === 'sent' && !item.rosterChanged && item.announcementVersion === 2) || announcementBusy(item)) return null;
     Object.assign(item, { announcement: 'pending', postingAt: Date.now(), deliveryError: null, rosterChanged: false });
     return item;
   });
@@ -901,7 +1012,7 @@ async function announce(ctx, id, allowClosed = false, refresh = false) {
       ...(interactionKey ? { components: signupButtons(party) } : {}),
       ...(messageId ? {} : { nonce: id, enforce_nonce: true })
     }, messageId ? 'PATCH' : 'POST');
-    result = { announcement: 'sent', messageId: message.id,
+    result = { announcement: 'sent', announcementVersion: 2, messageId: message.id,
       messageUrl: 'https://discord.com/channels/' + guildId + '/' + destination + '/' + message.id };
   } catch (error) {
     result = { announcement: 'failed', deliveryError: error instanceof Problem ? error.message : 'Discord delivery could not be confirmed.' };
@@ -926,10 +1037,10 @@ async function savePartyEdit(ctx, data) {
   const details = partyDetails(data);
   await editParties(ctx, parties => {
     const party = findParty(parties, data.id);
-    if (party.finished || party.cancelled) throw new Problem(409, 'This party has closed.');
+    if (party.finished || party.cancelled || party.startedAt) throw new Problem(409, 'This party has closed.');
     if (announcementBusy(party)) throw new Problem(409, 'The announcement is updating. Try again shortly.');
     const starts = partySchedule(data, party);
-    if (party.signups.length && details.guildOnly !== party.guildOnly) {
+    if ((party.signups.length || party.waitlist?.length) && details.guildOnly !== party.guildOnly) {
       throw new Problem(409, 'Guild eligibility can only change before members sign up.');
     }
     const guild = ctx.settings?.albionGuild;
@@ -940,19 +1051,30 @@ async function savePartyEdit(ctx, data) {
       if (role < 0) throw new Problem(409, 'Keep any role that already has signups.');
       return { ...entry, role };
     });
+    const waitlist = (party.waitlist || []).map(entry => {
+      const name = party.roles[entry.role]?.name.toLowerCase();
+      const role = details.roles.findIndex(item => item.name.toLowerCase() === name);
+      if (role < 0) throw new Problem(409, 'Keep any role that has a waitlist.');
+      return { ...entry, role };
+    });
     if (details.roles.some((role, i) => signups.filter(entry => entry.role === i).length > role.count)) {
       throw new Problem(409, 'Keep enough slots for existing signups.');
+    }
+    if (details.roles.some((role, i) => signups.filter(entry => entry.role === i).length +
+        waitlist.filter(entry => entry.role === i && entry.offered).length > role.count)) {
+      throw new Problem(409, 'Keep enough slots for existing offers.');
     }
     const delivery = party.messageId || party.messageUrl || party.threadId ? {} : announcementOptions(data, ctx, party);
     if (delivery.announcementThread && party.channelId === ctx.settings?.channelId && ctx.settings.channelType === 5) {
       throw new Problem(400, 'This party’s announcement channel must be a Discord text channel to create a thread.');
     }
     const wasFull = partyFull(party);
-    Object.assign(party, details, delivery, { starts, signups, announcement: demo ? 'demo' : 'pending',
+    Object.assign(party, details, delivery, { starts, signups, waitlist, announcement: demo ? 'demo' : 'pending',
       ...(details.guildOnly && !party.guildId ? { guildId: guild.id, guild: guild.name, region: ctx.settings.region } : {}) });
     queueGearReminder(party, wasFull);
   });
   if (!demo) await syncAnnouncement(ctx, data.id, true);
+  await settleParty(ctx, data.id);
   return findParty(await partiesFor(ctx), data.id);
 }
 async function deleteParty(ctx, id) {
@@ -990,14 +1112,23 @@ async function deleteParty(ctx, id) {
   }
   return null;
 }
-async function partyAction(ctx, { id, action, role, signupId }, discordSignup, expectedRoleKey) {
-  if (!['join', 'leave', 'remove-signup', 'cancel', 'retry', 'finish', 'delete', 'ping'].includes(action)) throw new Problem(400, 'Choose a party action.');
-  if (action !== 'join' && action !== 'leave') requireManager(ctx);
-  if (action === 'remove-signup' && (typeof signupId !== 'string' || !/^[\w-]{22}$/.test(signupId))) {
+async function partyAction(ctx, { id, action, role, signupId }, discordSignup, expectedRoleKey, actor = ctx) {
+  if (!['join', 'leave', 'waitlist', 'leave-waitlist', 'remove-waitlist', 'remove-signup', 'start', 'cancel', 'retry', 'finish', 'delete', 'ping'].includes(action)) throw new Problem(400, 'Choose a party action.');
+  if (!['join', 'leave', 'waitlist', 'leave-waitlist'].includes(action)) requireManager(ctx);
+  if (['remove-signup', 'remove-waitlist'].includes(action) && (typeof signupId !== 'string' || !/^[\w-]{22}$/.test(signupId))) {
     throw new Problem(400, 'Choose the signup to remove.');
   }
   const current = findParty(await partiesFor(ctx), id);
   if (!canViewParty(ctx, current, ctx.character)) throw new Problem(403, restrictedPartyMessage(current));
+  const actorName = partyPerson(actor.profile.id, actor.character?.name || actor.profile.name);
+  function checkDiscordAnnouncement(party) {
+    if (discordSignup && (announcementMessageId(party) !== discordSignup.messageId ||
+        (party.threadId || party.channelId) !== discordSignup.channelId ||
+        (action === 'join' && hash(party.roles[role]?.name || '').slice(0, 20) !== discordSignup.roleKey))) {
+      throw new Problem(409, 'This party button is out of date.');
+    }
+  }
+  checkDiscordAnnouncement(current);
   if (action === 'ping') {
     if (deletionBusy(current) || !canPingRoster(current)) {
       throw new Problem(409, 'This party needs a Discord thread and at least one signup to ping its roster.');
@@ -1009,71 +1140,113 @@ async function partyAction(ctx, { id, action, role, signupId }, discordSignup, e
   if (action === 'retry') {
     await throttle('publish:' + ctx.profile.id, 12);
     if (!demo) await syncAnnouncement(ctx, id, true);
+    await settleParty(ctx, id);
     return findParty(await partiesFor(ctx), id);
   }
   if (action === 'delete') return deleteParty(ctx, id);
-  if (['cancel', 'finish'].includes(action)) {
+  if (['start', 'cancel', 'finish'].includes(action)) {
     const updated = await editParties(ctx, parties => {
       const item = findParty(parties, id);
       if (announcementBusy(item)) throw new Problem(409, 'The announcement is posting. Try again shortly.');
       if (item.cancelled || item.finished) throw new Problem(409, 'This party is already closed.');
+      checkDiscordAnnouncement(item);
+      if (action === 'start') {
+        if (item.startedAt) throw new Problem(409, 'This party has already started.');
+        if (!item.signups.length) throw new Problem(409, 'The party needs at least one signup before starting.');
+        item.startedAt = new Date().toISOString();
+      }
       if (action === 'cancel') item.cancelled = true;
       if (action === 'finish') item.finished = true;
+      partyActivity(item, actorName + (action === 'start' ? ' **started the party**. The roster is locked.' :
+        action === 'finish' ? ' **finished the party**.' : ' **cancelled the party**.'));
       item.rosterChanged = true;
       return item;
     });
-    if (!demo && updated && announcementMessageId(updated)) await syncAnnouncement(ctx, id, true, true);
+    if (updated) await settleParty(ctx, id);
+    if (discordSignup) return 'Party started. The roster is locked.';
     return updated && findParty(await partiesFor(ctx), id);
   }
-  function checkDiscordAnnouncement(party) {
-    if (discordSignup && (announcementMessageId(party) !== discordSignup.messageId ||
-        (party.threadId || party.channelId) !== discordSignup.channelId ||
-        (action === 'join' && hash(party.roles[role]?.name || '').slice(0, 20) !== discordSignup.roleKey))) {
-      throw new Problem(409, 'This party button is out of date.');
-    }
-  }
-  checkDiscordAnnouncement(current);
   if (expectedRoleKey && hash(current.roles[role]?.name || '').slice(0, 20) !== expectedRoleKey) {
     throw new Problem(409, 'The party role changed. Choose it again from the suggestions.');
   }
-  if (action === 'join' && ctx.availableRoles.length && !ctx.expertise.length) throw new Problem(409, 'Choose your expertise roles before claiming a slot.');
-  let character = ctx.character;
-  if (action === 'join' && (current.guildOnly || (!demo && ctx.settings?.albionGuild && !ctx.guest))) {
-    if (!character) throw new Problem(403, 'Link your Albion character before claiming a slot.');
-    if (!demo) character = await characterFor(character.region, character.id);
-    const guild = ctx.settings?.albionGuild;
-    if (!canViewParty(ctx, current, character)) throw new Problem(403, restrictedPartyMessage(current));
-    if (!demo && guild && character.guildId !== guild.id) throw new Problem(403, guildMembershipError(guild));
-  }
-  const { updated, claimed } = await editParties(ctx, parties => {
+  const needsCharacter = action === 'join' || action === 'waitlist';
+  const character = needsCharacter ? await signupCharacter(ctx, current) : ctx.character;
+  const { updated, result } = await editParties(ctx, parties => {
     const item = findParty(parties, id);
     checkDiscordAnnouncement(item);
     if (!canViewParty(ctx, item, character)) throw new Problem(403, restrictedPartyMessage(item));
     if (deletionBusy(item)) throw new Problem(409, 'This party is being deleted.');
     if (partyClosed(item)) throw new Problem(409, 'Signups are closed for this party.');
-    if (action === 'join' && (item.guildOnly !== current.guildOnly || item.guildId !== current.guildId || item.region !== current.region ||
+    if (needsCharacter && (item.guildOnly !== current.guildOnly || item.guildId !== current.guildId || item.region !== current.region ||
         item.roles[role]?.name !== current.roles[role]?.name)) throw new Problem(409, 'The party changed. Try again.');
     const wasFull = partyFull(item);
+    item.waitlist ??= [];
+    const waiting = item.waitlist.find(entry => entry.user === ctx.profile.id);
+    if (action === 'leave-waitlist' || action === 'remove-waitlist') {
+      const entry = action === 'remove-waitlist' ? item.waitlist.find(entry => entry.id === signupId) : waiting;
+      if (!entry) throw new Problem(409, 'This waitlist entry has changed. Open the current roster and try again.');
+      item.waitlist = item.waitlist.filter(row => row !== entry);
+      partyActivity(item, partyPerson(entry.user, entry.name) + ' left the **' + discordText(item.roles[entry.role].name) +
+        '** waitlist' + (action === 'remove-waitlist' ? ' · removed by ' + actorName : '') + '.');
+      item.rosterChanged = true;
+      return { updated: item, result: 'Waitlist entry removed.' };
+    }
     const previous = action === 'remove-signup'
       ? item.signups.find(entry => signupRef(item, entry) === signupId)
       : item.signups.find(entry => entry.user === ctx.profile.id);
     if (action === 'remove-signup' && !previous) throw new Problem(409, 'This signup has changed. Open the current roster and try again.');
-    if (discordSignup && action === 'leave' && !previous) throw new Problem(409, 'You do not have a slot in this party.');
+    if (discordSignup && action === 'leave' && !previous && !waiting) throw new Problem(409, 'You do not have a slot or waitlist entry in this party.');
     const signups = item.signups.filter(entry => entry !== previous);
     const claimed = action === 'join' && !(discordSignup && previous?.role === role);
+    const queuedToggle = discordSignup && claimed && waiting?.role === role && !waiting.offered;
+    const occupied = Number.isInteger(role) && item.roles[role] &&
+      signups.filter(entry => entry.role === role).length + item.waitlist.filter(entry => entry.role === role && entry.offered && entry !== waiting).length >= item.roles[role].count;
+    if (queuedToggle || action === 'waitlist' || (discordSignup && claimed && occupied)) {
+      if (!Number.isInteger(role) || !item.roles[role]) throw new Problem(400, 'Choose a party role.');
+      if (previous?.role === role) throw new Problem(409, 'You already have a slot in that role.');
+      if (queuedToggle) {
+        item.waitlist = item.waitlist.filter(entry => entry !== waiting);
+        partyActivity(item, actorName + ' left the **' + discordText(item.roles[role].name) + '** waitlist.');
+      } else {
+        if (!occupied && !item.waitlist.some(entry => entry.role === role)) throw new Problem(409, 'A slot is available. Claim it directly.');
+        if (waiting?.role === role) return { updated: item, result: 'You are already on this waitlist.' };
+        if (!waiting && item.waitlist.length >= 20) throw new Problem(409, 'This party already has 20 players on its waitlist.');
+        item.waitlist = item.waitlist.filter(entry => entry !== waiting);
+        item.waitlist.push({ id: key(), role, user: ctx.profile.id, name: character?.name || ctx.profile.name, offered: false });
+        partyActivity(item, actorName + ' joined the **' + discordText(item.roles[role].name) + '** waitlist.');
+      }
+      item.rosterChanged = true;
+      return { updated: item, result: queuedToggle ? 'You left the waitlist.' : 'Added to the ' + item.roles[role].name + ' waitlist.' };
+    }
     if (claimed) {
       if (!Number.isInteger(role) || !item.roles[role]) throw new Problem(400, 'Choose a party role.');
-      if (signups.filter(entry => entry.role === role).length >= item.roles[role].count) throw new Problem(409, 'That role is full.');
+      if (occupied) throw new Problem(409, 'That role is full. Join its waitlist.');
+      if (item.waitlist.some(entry => entry.role === role && entry !== waiting) && !(waiting?.role === role && waiting.offered)) {
+        throw new Problem(409, 'The next waitlisted player has priority. Join the waitlist.');
+      }
       signups.push({ role, name: character?.name || ctx.profile.name, user: ctx.profile.id,
         claimId: previous?.role === role ? signupRef(item, previous) : key() });
+      item.waitlist = item.waitlist.filter(entry => entry !== waiting);
+      if (!previous || previous.role !== role) {
+        partyActivity(item, partyPerson(ctx.profile.id, character?.name || ctx.profile.name) +
+          (previous ? ' switched from **' + discordText(item.roles[previous.role].name) + '** to **' : ' joined **') +
+          discordText(item.roles[role].name) + '**' + (actor.profile.id !== ctx.profile.id ? ' · assigned by ' + actorName : '') + '.');
+      }
+    } else {
+      if (previous) partyActivity(item, partyPerson(previous.user, previous.name) + ' left **' + discordText(item.roles[previous.role].name) + '**' +
+        (action === 'remove-signup' ? ' · removed by ' + actorName : '') + '.');
+      if (action === 'leave' && waiting) {
+        item.waitlist = item.waitlist.filter(entry => entry !== waiting);
+        partyActivity(item, actorName + ' left the **' + discordText(item.roles[waiting.role].name) + '** waitlist.');
+      }
     }
     item.signups = signups;
     queueGearReminder(item, wasFull);
     item.rosterChanged = true;
-    return { updated: item, claimed };
+    return { updated: item, result: claimed ? 'Slot claimed for ' + item.roles[role].name + '.' : 'Your slot was released.' };
   });
-  if (!demo && announcementMessageId(updated)) await syncAnnouncement(ctx, id, true, true);
-  if (discordSignup) return claimed ? 'Slot claimed for ' + updated.roles[role].name + '.' : 'Your slot was released.';
+  await settleParty(ctx, id);
+  if (discordSignup) return result;
   return findParty(await partiesFor(ctx), id);
 }
 
@@ -1125,6 +1298,11 @@ async function interactionSignup(event, id, roleKey) {
   Object.assign(ctx, { availableRoles, expertise: expertise.filter(name => availableRoles.includes(name)), character, settings,
     guest: hasGuestRole(settings, event.member.roles, provisioned) });
   const party = findParty(parties, id);
+  if (roleKey === 'start') {
+    const organizer = await discordCommandContext(event);
+    return partyAction(organizer, { id, action: 'start' },
+      { roleKey, messageId: event.message.id, channelId: event.channel_id });
+  }
   const leaving = roleKey === 'leave';
   const role = leaving ? undefined : party.roles.findIndex(item => hash(item.name).slice(0, 20) === roleKey);
   if (!leaving && role < 0) throw new Problem(409, 'This party button is out of date.');
@@ -1299,7 +1477,7 @@ async function manageRosterFromDiscord(event) {
   if (event.data.resolved?.users?.[input.player]?.bot) throw new Problem(400, 'Choose a player account.');
   const player = await discordPlayerContext({ id: input.player, name: 'Selected player' });
   if (!player.character || onboardingStep(player)) throw new Problem(409, 'That player must link their Albion character and save their Warband roles first.');
-  updated = await partyAction(player, { id: party.id, action: 'join', role }, undefined, input.role);
+  updated = await partyAction(player, { id: party.id, action: 'join', role }, undefined, input.role, ctx);
   return 'Assigned **' + discordText(player.character.name) + '** to **' + discordText(updated.roles[role].name) + '** in **' +
     discordText(updated.title) + '**.' +
     (updated.announcement === 'failed' ? ' The Discord announcement could not be updated. Open the party in Warband to retry.' : '');
@@ -1357,7 +1535,7 @@ async function discordInteraction(req, res) {
       isRosterCommand ? await rosterCommandChoices(event).catch(() => []) : [];
     return json(res, { type: 8, data: { choices } });
   }
-  const match = /^wb:([\w-]{22}):([a-f0-9]{20}|leave)$/.exec(event.data?.custom_id || '');
+  const match = /^wb:([\w-]{22}):([a-f0-9]{20}|leave|start)$/.exec(event.data?.custom_id || '');
   const command = event.type === 2 && (isWarband || isRosterCommand);
   const signup = event.type === 3 && event.guild_id === guildId && match && snowflake(event.message?.id);
   if ((!command && !signup) || !snowflake(event.id) || !/^[\w.-]{1,256}$/.test(event.token || '')) {
@@ -1479,6 +1657,7 @@ async function routes(req, res) {
           ? (ctx.guest ? guestMembershipError(settings.albionGuild) : guildMembershipError(settings.albionGuild)) : '' });
     }
     const parties = await partiesFor(ctx);
+    await queuePartyMaintenance(ctx, parties);
     const viewer = await partyViewerCharacter(ctx, parties).catch(() => null);
     const boardSettings = settings && !ctx.manager && !member.admin
       ? { region: settings.region, channel: settings.channel, albionGuild: settings.albionGuild } : settings;
