@@ -10,6 +10,16 @@ Install the same deployment's bot in each server using **Add to Discord**. A ser
 
 When upgrading from single-server mode, existing users must sign out and sign in again to grant Discord's server-list permission. Existing guild data is retained. A separate preview application uses its own credentials and a unique `DATA_NAMESPACE`; its bot installation and settings do not automatically transfer to production.
 
+## Shared Discord metadata cache and testing
+
+The existing database shares the bot's installed-server list for 15 seconds and its identity for five minutes across app instances. Cache keys include the Discord application ID and use the deployment's database namespace. Concurrent refreshes share a leased database record; failed reads are not cached. New bot installations can take up to 15 seconds to appear in the server picker.
+
+Member lookups, role permissions, channel permissions and sign-in requirements remain live. Metadata cache entries never grant access to a workspace. This cache reduces repeated metadata requests; it does not eliminate the browser's refresh requests or establish a maximum supported user count.
+
+Run `npm run check` and `npm test` from this directory with Node.js 24. Tests use local SQLite and mocked Discord/Albion responses, discard database connection environment variables, and do not send Discord messages. They cover cache expiry and failed refreshes, 40 simultaneous readers across four simulated cache instances, 40 concurrent board requests, live membership revocation, server isolation, and onboarding a third server with the allowlist empty. Local mock timings are not production capacity measurements.
+
+For a manual check, invite the production bot to a test Discord server and sign in as its administrator. Configure a test announcement channel, organizer role and Albion guild, then save a template and publish a test party. Use a regular member and guest account to check visibility and signups; remove the required sign-in role to confirm access is revoked. Switch to another server and verify that its templates and parties are separate. Monitor Vercel function usage, latency, errors, database connections and Discord 429 responses during a small pilot before increasing traffic. Avoid load-testing against real Discord or Albion APIs.
+
 ## Run the demo
 
 Install Node.js 24, open a terminal in this folder, and run:

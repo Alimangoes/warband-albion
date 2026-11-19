@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes, createHash, createPublicKey, verify } from 'node:crypto';
 import { waitUntil } from '@vercel/functions';
 import { createDiscordGuide, withRecordLock } from './discord-guide.mjs';
+import { createDiscordDataCache } from './discord-cache.mjs';
 import { helpCommand, helpReply } from './discord-help.mjs';
 import { combatPrices, estimateSilver, priceCombatItems } from './combat-market.mjs';
 import { readFileSync } from 'node:fs';
@@ -79,7 +80,7 @@ async function discordGuilds(authorization) {
   throw new Problem(502, 'Discord returned too many server pages. Try again shortly.');
 }
 async function workspacesFor(profile) {
-  const installed = new Set((await discordGuilds(bot)).map(guild => guild.id));
+  const installed = new Set((await cachedDiscordData('guilds', 15000, () => discordGuilds(bot))).map(guild => guild.id));
   return (profile.servers || []).filter(guild => allowedServer(guild.id)).map(guild => ({
     id: guild.id, name: guild.name, installed: installed.has(guild.id),
     canInstall: guild.owner || (/^\d+$/.test(guild.permissions || '') && isAdmin(guild.permissions))
@@ -109,6 +110,8 @@ async function workspaceRoutes(req, res) {
 
 const db = setupRequired ? null : namespaceStore(connectionString ? openPostgres(connectionString) : openSQLite(), process.env.DATA_NAMESPACE || '');
 const { get, put, remove } = db || {};
+const cachedDiscordData = db ? createDiscordDataCache({ db, clientId: client }) : null;
+const botIdentity = () => cachedDiscordData('identity', 300000, () => discord('/users/@me', bot));
 const auth = demo ? 'albion_demo' : 'albion_session';
 const csrf = 'albion_oauth';
 const cookie = (name, value, age) => name + '=' + value + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + age + (secure ? '; Secure' : '');
@@ -282,7 +285,7 @@ async function setupExpertiseRoles(ctx, data) {
 async function configureDiscordExpertise(ctx, catalog, action, name) {
   const guildPath = '/guilds/' + serverId();
   const [roles, channels, identity, settings, saved] = await Promise.all([
-    discord(guildPath + '/roles', bot), discord(guildPath + '/channels', bot), discord('/users/@me', bot),
+    discord(guildPath + '/roles', bot), discord(guildPath + '/channels', bot), botIdentity(),
     get(ctx.scope + ':settings'), get(expertiseMappingKey(ctx))
   ]);
   const member = await discord(guildPath + '/members/' + identity.id, bot);
@@ -394,7 +397,7 @@ async function options(ctx) {
   requireManager(ctx, true);
   if (demo) return { roles: demoRoles, channels: demoChannels, expertiseRoles: [] };
   const [channels, identity, provisioned, guide] = await Promise.all([
-    discord('/guilds/' + serverId() + '/channels', bot), discord('/users/@me', bot), get(expertiseMappingKey(ctx), {}), discordGuide().status()
+    discord('/guilds/' + serverId() + '/channels', bot), botIdentity(), get(expertiseMappingKey(ctx), {}), discordGuide().status()
   ]);
   const botMember = await discord('/guilds/' + serverId() + '/members/' + identity.id, bot);
   const roles = ctx.member.allRoles;
