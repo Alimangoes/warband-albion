@@ -22,11 +22,18 @@ export async function request(url, options = {}, service) {
   }
   if (!response.ok) {
     const status = response.status;
-    if (status === 429) throw new Problem(429, service + ' is rate limiting requests. Try again shortly.', status);
+    if (status === 429) {
+      const error = new Problem(429, service + ' is rate limiting requests. Try again shortly.', status);
+      const header = response.headers.get('retry-after');
+      const seconds = header === null ? NaN : Number(header);
+      if (Number.isFinite(seconds) && seconds >= 0) error.retryAfterMs = Math.ceil(seconds * 1000);
+      throw error;
+    }
     if (status === 404) throw new Problem(404, service + ' could not find that record.', status);
     if (status === 403) throw new Problem(403, service + ' denied access. Check the bot permissions and channel.', status);
     throw new Problem(502, service + ' returned an error. Check the integration configuration.', status);
   }
+  if (response.status === 204) return null;
   try {
     return await response.json();
   } catch {
@@ -34,10 +41,11 @@ export async function request(url, options = {}, service) {
   }
 }
 
-export function discord(path, auth, data) {
+export function discord(path, auth, data, method = data ? 'POST' : 'GET') {
   return request(discordRoot + path, {
-    headers: { Authorization: auth, ...(data ? { 'Content-Type': 'application/json' } : {}) },
-    ...(data ? { method: 'POST', body: JSON.stringify(data) } : {})
+    method,
+    headers: { ...(auth ? { Authorization: auth } : {}), ...(data ? { 'Content-Type': 'application/json' } : {}) },
+    ...(data ? { body: JSON.stringify(data) } : {})
   }, 'Discord');
 }
 
@@ -47,7 +55,7 @@ export function albion(region, path) {
 }
 
 export const isAdmin = (permissions) => Boolean(BigInt(permissions) & 40n);
-export const canPost = (guildId, roles, member, channel) => {
+export const canPost = (guildId, roles, member, channel, additionalPermissions = 0n) => {
   const held = roles.filter(role => role.id === guildId || member.roles.includes(role.id));
   let permissions = held.reduce((all, role) => all | BigInt(role.permissions), 0n);
   if (permissions & 8n) return true;
@@ -60,5 +68,6 @@ export const canPost = (guildId, roles, member, channel) => {
     const deny = group.reduce((bits, row) => bits | BigInt(row?.deny || 0), 0n);
     permissions = (permissions & ~deny) | allow;
   }
-  return (permissions & 3072n) === 3072n;
+  const required = 3072n | additionalPermissions;
+  return (permissions & required) === required;
 };

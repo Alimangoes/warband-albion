@@ -8,9 +8,10 @@
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env server.mjs",
-    "check": "node --check server.mjs && node --check api/warband.mjs && node --check storage.mjs && node --check public/app.js && node --check providers.mjs && node --check demo.mjs"
+    "check": "node --check server.mjs && node --check api/warband.mjs && node --check storage.mjs && node --check public/app.js && node --check providers.mjs && node --check demo.mjs && node --check discord-guide.mjs"
   },
   "dependencies": {
+    "@vercel/functions": "^3.11.3",
     "pg": "^8.23.1"
   }
 }

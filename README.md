@@ -35,16 +35,28 @@ The Vercel deployment starts with its own Postgres database. The local demo uses
 
 ## Connect your Discord server
 
+To enable role signup buttons, set `DISCORD_PUBLIC_KEY` to the app's public key from Discord Developer Portal → General Information. Deploy, then set the Interactions Endpoint URL to your public origin plus `/api/discord/interactions`. Members need saved roles in Warband before using the buttons. Announcements gain buttons on publishing or after an organizer saves an edit.
+
+Once Discord interactions are configured, Warband registers **/help** automatically when the board loads and **/warband** when the server has saved templates. Organizers can run `/warband template:Gold Run T7 start:11/16/2026 09:00 PM note:Bring a swap set`. The template field suggests saved templates. Start times use Philippine time (UTC+8), and omitting the note keeps the saved note. Warband adds the party to the board and sends the announcement using the configured channel and the template's announcement options.
+
+Use **/help** for the full guide or **/help topic:** to open a specific section. Update `discord-help.mjs` when a workflow or command changes.
+
+The recommended build picker uses equipment metadata from [ao-bin-dumps](https://github.com/ao-data/ao-bin-dumps) and icons from Albion's render service. Run `node scripts/update-albion-items.mjs` to refresh the bundled catalog.
+
 1. Create an application and bot in the [Discord Developer Portal](https://discord.com/developers/applications).
 2. Under **OAuth2**, add `http://localhost:4317/auth/discord/callback` to test locally. For your guild deployment, add `https://your-domain/auth/discord/callback` using your actual HTTPS origin. Discord requires the registered redirect URI to match exactly.
-3. Install the bot in your Discord server using the `bot` scope. Give it **View Channel** and **Send Messages** in the channels that may receive announcements. The app uses individual member lookups via Discord's REST API. Gateway connections and privileged intents are unnecessary. [Discord guild member API](https://docs.discord.com/developers/resources/guild#get-guild-member)
+3. Install the bot in your Discord server using the `bot` scope. Give it **View Channel** and **Send Messages** in the channels that may receive announcements. The app uses individual member lookups via Discord's REST API. [Discord guild member API](https://docs.discord.com/developers/resources/guild#get-guild-member)
 4. Copy `.env.example` to `.env`. Set `DEMO_MODE=false` and add the Discord application ID, OAuth2 client secret, bot token, and target server ID. Copy the server ID from Discord with Developer Mode enabled. Keep the two secrets in your server's environment or local `.env`.
-5. Run `npm start` and sign in as the Discord server owner or a member with **Administrator** or **Manage Server**. In **Settings**, choose the organizer role, announcement channel, Albion region, and optionally the exact Albion guild name. Server administrators retain management access. Other Discord members can browse parties and sign up.
+5. Run `npm start` and sign in as the Discord server owner or a member with **Administrator** or **Manage Server**. In **Settings**, choose the organizer role, announcement channel, Albion region, and optionally the Albion guild ID. Server administrators retain management access. Other Discord members can browse parties and sign up.
 6. For shared use, deploy this folder to a Node.js host with persistent storage for `data/` and set `APP_URL` to the public HTTPS origin. The server uses HTTP internally. Terminate HTTPS at the host or reverse proxy. Set `PORT` for the host and `BIND_HOST` if the proxy expects a specific bind address. Party links in Discord use `APP_URL`, so localhost links are only usable on the host machine.
+
+## Post the Discord guide
+
+Enable **Warband guide** under **Settings** and select a text channel. Give the bot **View Channel**, **Send Messages**, and **Embed Links** there. **Save guide** edits the existing post when the channel stays the same.
 
 ## Albion compatibility
 
-The app queries Albion's public Gameinfo endpoints for Asia, Europe, and the Americas. Members link an exact character name and region in **Profile**. The configured guild's in-game roster appears under **Guild roster**. An organizer can require a guild match when publishing. Warband checks the linked character's current guild again before accepting a guild-only signup. Character ownership is self-reported, so Discord roles are the source of management permissions.
+The app queries Albion's public Gameinfo endpoints for Asia, Europe, and the Americas. Members link an exact character name and region in **Profile**. The configured guild's in-game roster appears under **Guild members**. An organizer can require a guild match when publishing. Warband checks the linked character's current guild again before accepting a guild-only signup. Character ownership is self-reported, so Discord roles are the source of management permissions.
 
 ## Party workflow
 
@@ -53,5 +65,7 @@ The app queries Albion's public Gameinfo endpoints for Asia, Europe, and the Ame
 - Members can claim one slot per party, change roles when space is available, and leave before the start time. The board closes signups at the start time.
 - Failed announcements remain visible to organizers. Open the party to retry delivery to its original channel. If delivery was uncertain, check Discord before retrying.
 - Cancelling a party closes signups in Warband. Its original Discord announcement continues to link to the cancelled party.
+- Organizers can **Finish** a party to close signups and retain the roster, or **Delete** it to remove it, its signups, and its linked Discord thread. The bot needs **Manage Threads** in the announcement channel. Announcements posted directly in a channel remain there.
+- Members select at least one role before their first party signup and can edit their choices in **Profile**. Give the Warband bot **Manage Roles**, then click **Settings → Set up Discord roles** as a server admin. Warband creates the eight member roles with permissions off and links them for sync. Any existing matching roles must have permissions off and sit below the bot. Members can click **Save roles** again to retry sync after setup or a Discord error.
 
 Run `npm run check` for syntax checks. The local build uses Node's SQLite module. The Vercel build uses the `pg` driver for Postgres. Back up a local SQLite database using a SQLite-aware backup tool.

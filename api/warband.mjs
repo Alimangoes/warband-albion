@@ -8,9 +8,13 @@ const paths = {
   logout: '/api/logout',
   options: '/api/options',
   roster: '/api/roster',
+  profile: '/api/profile',
   settings: '/api/settings',
   character: '/api/character',
+  expertise: '/api/expertise',
   party: '/api/party',
+  templates: '/api/templates',
+  interactions: '/api/discord/interactions',
   action: '/api/party/action'
 };
 

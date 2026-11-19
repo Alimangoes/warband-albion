@@ -3,7 +3,7 @@ export const demoRoles = [{ id: '1', name: 'Guild Officer' }, { id: '2', name: '
 export const demoChannels = [{ id: '1', name: 'party-recruitment' }, { id: '2', name: 'guild-events' }, { id: '3', name: 'general' }];
 export const demoSettings = {
   guildId: 'demo', server: 'Ashen Vanguard', roleId: '1', channelId: '1', channel: 'party-recruitment',
-  region: 'asia', albionGuild: { id: 'demo', name: 'Ashen Vanguard' }
+  region: 'asia', albionGuild: { id: 'demo', name: 'Ashen Vanguard', master: { id: 'demo-ironwarden', name: 'Ironwarden' } }
 };
 const makeParty = (id, title, type, hours, zone, summary, roles, signups, host) => ({
   id, title, type, starts: later(hours), zone, summary, roles: roles.map(([name, count]) => ({ name, count })),

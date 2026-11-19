@@ -1,0 +1,51 @@
+const adminCookie = cookie(await login(admin));
+const memberCookie = cookie(await login(member));
+const details = { title:'Roster ping fixture',type:'PvE',zone:'Thetford',roles:[{name:'Tank',count:2}],
+  waitUntilFull:true, announcementThread:true, nonce:randomBytes(10).toString('hex') };
+const party = await ok(await api('party',adminCookie,details));
+const action = async (auth, name, role) => api('party/action',auth,{ id:party.id,action:name,role });
+assert.equal(party.canPingRoster,false);
+assert.equal((await action(adminCookie,'ping')).status,409);
+const first = await ok(await action(adminCookie,'join',0));
+assert.equal(first.canPingRoster,true);
+assert.equal((await action(memberCookie,'ping')).status,403);
+const pings = () => [...announcements.entries()].filter(([,data]) => data.allowed_mentions?.users.length > 0);
+assert.equal(pings().length,0);
+await ok(await action(adminCookie,'ping'));
+assert.equal(pings().length,1);
+assert.match(pings()[0][1].content, /Party check-in/);
+assert.deepEqual(pings()[0][1].allowed_mentions, {parse:[],users:[admin]});
+assert.equal((await action(adminCookie,'ping')).status,429);
+
+const event = { id:'650000000000000001',token:'ping-signed-fixture',application_id:client,type:3,
+  guild_id:guild, channel_id:thread, member:{user:{id:member,username:'DAGITMember'},roles:[memberRole]},
+  message:{id:party.messageUrl.split('/').at(-1)}, data:{custom_id:'wb:' + party.id + ':' + hash('Tank').slice(0,20)} };
+const payload = JSON.stringify(event), stamp = String(Math.floor(Date.now()/1000));
+const signature = sign(null,Buffer.from(stamp+payload),privateKey).toString('hex');
+const response = await nativeFetch(origin+'/api/discord/interactions',{method:'POST',headers:{
+  'content-type':'application/json','x-signature-timestamp':stamp,'x-signature-ed25519':signature},body:payload});
+assert.equal((await ok(response)).type,5);
+for(let i=0;i<30 && !replies.has(event.token);i++) await pause(30);
+assert.match(replies.get(event.token), /Slot claimed/);
+assert.equal(pings().length,2);
+const [message, reminder] = pings()[1];
+assert.equal(messages.get(message),thread);
+assert.match(reminder.content, /Party full[!].*Gear up/);
+assert.deepEqual(reminder.allowed_mentions, {parse:[],users:[admin,member]});
+assert.equal(reminder.enforce_nonce,true);
+assert.ok(reminder.nonce.length <= 25);
+await ok(await action(memberCookie,'leave'));
+await ok(await action(memberCookie,'join',0));
+assert.equal(pings().length,2);
+
+const webParty = await ok(await api('party',adminCookie,{...details,roles:[{name:'Tank',count:1}],nonce:randomBytes(10).toString('hex')}));
+await ok(await api('party/action',memberCookie,{id:webParty.id,action:'join',role:0}));
+assert.equal(pings().length,3);
+assert.deepEqual(pings()[2][1].allowed_mentions.users,[member]);
+const channelParty = await ok(await api('party',adminCookie,{...details,announcementThread:false,
+  roles:[{name:'Tank',count:1}],nonce:randomBytes(10).toString('hex')}));
+const outsideThread = await ok(await api('party/action',memberCookie,{id:channelParty.id,action:'join',role:0}));
+assert.equal(outsideThread.canPingRoster,false);
+assert.equal(pings().length,3);
+console.log('Manual organizer ping, per-party throttling, signed Discord and web claims, once-only gear reminder, and thread-only routing verified.');
+await new Promise(resolve => server.close(resolve));

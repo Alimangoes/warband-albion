@@ -2,37 +2,55 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="Organize Albion Online guild parties and signups with Discord.">
   <meta name="theme-color" content="#101013">
   <title>Warband — Albion Party Organizer</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/warband-favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
-<body>
+<body class="onboarding">
   <div class="shell">
-    <aside class="sidebar" aria-label="Workspace">
-      <a href="/" class="brand" aria-label="Warband home"><span class="crest" data-icon="crest"></span><span><strong>WARBAND</strong><small>ALBION PARTY ORGANIZER</small></span></a>
-      <div class="server-tile"><span class="server-icon" data-icon="castle"></span><div><strong id="server-name">Guild workspace</strong><small id="server-detail">Albion Online</small></div></div>
-      <nav aria-label="Main navigation">
+    <aside class="sidebar" aria-label="Workspace" hidden>
+      <a href="/" class="brand" aria-label="Warband home"><img class="crest" src="/warband-logo.png" alt="" width="43" height="43"><span><strong>WARBAND</strong><small>ALBION PARTY ORGANIZER</small></span></a>
+      <div class="server-tile"><span class="server-icon"><span data-icon="castle"></span><img data-server-image width="33" height="33" alt="" hidden></span><div><strong id="server-name">Guild workspace</strong><small id="server-detail">Albion Online</small></div></div>
+      <nav class="desktop-nav" aria-label="Main navigation">
         <p class="nav-label">WORKSPACE</p>
         <button data-page="board" class="nav-button active"><span data-icon="swords"></span>Party board</button>
         <button data-page="mine" class="nav-button"><span data-icon="flag"></span>My signups</button>
-        <button data-page="roster" class="nav-button"><span data-icon="users"></span>Guild roster</button>
-        <p class="nav-label settings-label">PREFERENCES</p>
-        <button data-page="settings" class="nav-button"><span data-icon="gear"></span>Settings</button>
+        <button data-page="roster" class="nav-button"><span data-icon="users"></span>Guild members</button>
+        <button data-page="guests" class="nav-button"><span data-icon="userPlus"></span>Guests</button>
+        <p class="nav-label settings-label" data-organizer-nav hidden>PREFERENCES</p>
+        <button data-page="settings" class="nav-button" data-organizer-nav hidden><span data-icon="gear"></span>Settings</button>
       </nav>
-      <button class="profile-tile" data-page="profile"><span class="profile-icon" data-icon="user"></span><span><strong id="profile-name">Your profile</strong><small id="profile-detail">Albion character</small></span><span data-icon="chevron"></span></button>
+      <button class="profile-tile" data-page="profile"><span class="profile-icon" id="profile-avatar" data-icon="user"></span><span><strong id="profile-name">Your profile</strong><small id="profile-detail">Albion character</small></span><span data-icon="chevron"></span></button>
+      <nav class="mobile-nav" aria-label="Main navigation">
+        <button type="button" data-page="board" class="nav-button active" aria-label="Party board" title="Party board"><span data-icon="swords"></span></button>
+        <button type="button" data-page="mine" class="nav-button" aria-label="My signups" title="My signups"><span data-icon="flag"></span></button>
+        <button type="button" data-page="roster" class="nav-button" aria-label="Guild members" title="Guild members"><span data-icon="users"></span></button>
+        <button type="button" data-page="guests" class="nav-button" aria-label="Guests" title="Guests"><span data-icon="userPlus"></span></button>
+        <button type="button" data-page="settings" class="nav-button" aria-label="Settings" title="Settings" data-organizer-nav hidden><span data-icon="gear"></span></button>
+        <button type="button" data-page="profile" class="nav-button" aria-label="Profile" title="Profile"><span data-icon="user"></span></button>
+      </nav>
     </aside>
     <main>
-      <header class="topbar">
+      <header class="topbar" hidden>
         <div class="breadcrumbs"><span>Workspace</span><span data-icon="chevron"></span><strong id="breadcrumb">Party board</strong></div>
-        <div class="top-actions"><span id="mode" class="mode" hidden><i></i> Demo workspace</span><button class="button primary create" hidden><span data-icon="plus"></span>Create party</button></div>
+        <div class="top-actions"><span id="mode" class="mode" hidden><i></i> Demo workspace</span></div>
       </header>
-      <div id="view" class="content" aria-busy="true"><p class="loading">Loading party board…</p></div>
+      <div id="view" class="content">
+        <div class="load-panel load-start">
+          <div class="load-status" role="status">
+            <img src="/warband-logo.png" width="42" height="42" alt="">
+            <span>Loading Warband…</span><span class="load-ring" aria-hidden="true"></span>
+          </div>
+          <div class="load-skeleton" aria-hidden="true"><span></span><span></span></div>
+        </div>
+      </div>
     </main>
   </div>
   <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
