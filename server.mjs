@@ -1799,6 +1799,23 @@ async function routes(req, res) {
     const library = ctx.scope + ':templates';
     if (req.method === 'GET') return json(res, await get(library, []));
     const data = await body(req);
+    if (data.action === 'import-preview') {
+      const file = data.file;
+      if (file?.format !== 'warband-template' || file.version !== 1 || !file.template ||
+          typeof file.template !== 'object' || Array.isArray(file.template)) {
+        throw new Problem(400, 'Choose a Warband template JSON file (version 1).');
+      }
+      const input = file.template;
+      const details = partyDetails(input);
+      if (input.announcementThread !== undefined && typeof input.announcementThread !== 'boolean') {
+        throw new Problem(400, 'Choose whether to use Discord threads.');
+      }
+      if (input.starts != null && (typeof input.starts !== 'string' || !Number.isFinite(Date.parse(input.starts)))) {
+        throw new Problem(400, 'Choose a valid template start time.');
+      }
+      return json(res, { ...details, announcementThread: input.announcementThread === true,
+        mentionRoleIds: [], starts: details.waitUntilFull || input.starts == null ? null : new Date(input.starts).toISOString() });
+    }
     const templateId = data.id;
     if ((templateId || data.action === 'delete') && (typeof templateId !== 'string' || !/^[\w-]{22}$/.test(templateId))) {
       throw new Problem(400, 'Choose a valid template.');

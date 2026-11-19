@@ -68,6 +68,8 @@ The app queries Albion's public Gameinfo endpoints for Asia, Europe, and the Ame
 
 ## Party workflow
 
+Organizers can transfer templates between server workspaces: open **Templates**, use **Export** on a saved template to download its JSON file, then choose **Import template** in the destination workspace. Review the draft and click **Save template**. Roles, slot counts, recommended builds, notes and scheduling options are preserved. Discord mentions are cleared so you can choose roles from the destination server. Imports are limited to 24 KB and are validated before opening; importing does not publish a party or overwrite an existing template.
+
 - Set the activity, start time, meeting location, notes, and up to 20 slots split between named roles. The browser shows times in its local time zone.
 - Publishing saves the party and posts to the saved Discord channel. The post links directly to the party and suppresses user and role pings.
 - Members can claim one slot per party, change roles when space is available, and leave before the start time. The board closes signups at the start time.

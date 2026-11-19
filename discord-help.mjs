@@ -30,10 +30,10 @@ export const helpTopics = {
     '6. **Finish** keeps the roster. **Cancel party** closes the run. **Delete** removes the party and linked thread with **Manage Threads** permission.'
   ].join('\n') },
   templates: { title: 'Templates and /warband', description: [
-    '• Use **Save template** in the party form. Templates are shared by all organizers. Open **Templates** to reuse, edit, or delete one. Saving an opened template updates that template, including its saved start time.',
-    '• The template library updates automatically. If someone saves while you have a draft open, **Save template** asks you to choose **Override changes** to save your draft over their version or **Cancel changes** to discard your draft.',
-    '• With a saved template, organizers can use **/warband**. Select **template**, optionally replace **note**, and enter a future **start** in Philippine time (UTC+8). Omit **start** for **Wait until full** templates.',
-    '• Use **MM/DD/YYYY hh:mm AM or PM** for the Discord start. The command uses the time you enter and publishes to the board and the configured announcement channel, with the template’s thread and mention settings.'
+    '• **Save template** shares a party preset with your server’s organizers. Open **Templates** to reuse, edit or delete it. Saving an opened template updates it, including its start time.',
+    '• The library refreshes automatically. Conflicting edits offer **Override changes** to replace the latest version or **Cancel changes** to discard your draft.',
+    '• **Export** downloads a template JSON file. **Import template** opens it for review; reselect Discord mentions, then **Save template**. Importing alone does not save or publish.',
+    '• **/warband template: note: start:** publishes a saved template to the board and announcement channel, using its thread and mention settings. Start format: **MM/DD/YYYY hh:mm AM or PM**, Philippine time (UTC+8). Omit **start** for **Wait until full**; omit **note** to keep saved notes.'
   ].join('\n') },
   settings: { title: 'Server admin settings', description: [
     '1. In **Settings**, choose the Discord organizer role and announcement channel. Set the Albion region and guild ID. Enter the current guild master’s exact Albion name to show the crown.',

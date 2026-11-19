@@ -1179,16 +1179,52 @@ function redrawTemplateLibrary(library, templates) {
   if (templateSnapshots.get(library)?.snapshot === snapshot) return;
   templateSnapshots.set(library, { snapshot, templates });
   refreshViewKeepingFocus(library, () => {
-    library.innerHTML = (templates.length ? '<ul class="template-list">' + templates.map(template =>
+    library.innerHTML = '<div class="actions"><button type="button" class="button outline" data-import-template>Import template</button>' +
+      '<input type="file" data-template-file accept="application/json,.json" aria-label="Import template file" hidden></div>' +
+      '<p class="hint">Import a Warband JSON file to review before saving. Discord mentions must be selected again for this server.</p>' +
+      (templates.length ? '<ul class="template-list">' + templates.map(template =>
       '<li><div><strong>' + esc(template.title) + '</strong><p class="hint">' + esc(template.type) + ' · ' +
       esc(template.zone) + ' · ' + capacity(template) + ' slots</p></div>' +
       '<div class="actions">' + button('Use template', 'data-use-template="' + esc(template.id) + '" aria-label="Use template: ' + esc(template.title) + '"') +
+      button('Export', 'data-export-template="' + esc(template.id) + '" aria-label="Export template: ' + esc(template.title) + '"', 'outline') +
       button(icon('close'), 'data-delete-template="' + esc(template.id) + '" aria-label="Delete template: ' + esc(template.title) + '"', 'outline danger') +
       '</div></li>').join('') + '</ul>' : empty('No saved templates. Use Save template in the party form to add one.')) + errorLine;
   });
 }
 async function loadTemplateLibrary(library) {
+  library.addEventListener('change', async event => {
+    if (!event.target.matches('[data-template-file]')) return;
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    await formTask(library, $('[data-import-template]', library), async () => {
+      if (file.size > 24000) throw new Error('Choose a template file smaller than 24 KB.');
+      let contents;
+      try { contents = JSON.parse(await file.text()); }
+      catch { throw new Error('This file is not valid JSON. Export a template from Warband and try again.'); }
+      const draft = await api('templates', { action: 'import-preview', file: contents });
+      if (!library.isConnected || !dialog.open) return;
+      createParty(draft);
+      const status = $('[data-template-status]', dialog);
+      status.textContent = 'Imported draft. Review the details, start time and Discord mentions, then click Save template. Nothing has been saved or published yet.';
+      status.hidden = false;
+    });
+  });
   library.addEventListener('click', async event => {
+    if (event.target.closest('[data-import-template]')) return $('[data-template-file]', library).click();
+    const exportControl = event.target.closest('[data-export-template]');
+    if (exportControl) {
+      const source = templateSnapshots.get(library).templates.find(item => item.id === exportControl.dataset.exportTemplate);
+      const template = Object.fromEntries(['title', 'type', 'zone', 'summary', 'roles', 'starts', 'guildOnly', 'waitUntilFull', 'announcementThread']
+        .filter(field => source[field] !== undefined).map(field => [field, source[field]]));
+      const url = URL.createObjectURL(new Blob([JSON.stringify({ format: 'warband-template', version: 1, template }, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = (source.title.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 60) || 'warband') + '.warband.json';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return;
+    }
     const control = event.target.closest('[data-use-template]');
     if (control) return createParty(templateSnapshots.get(library).templates.find(template => template.id === control.dataset.useTemplate));
     const remove = event.target.closest('[data-delete-template]');
