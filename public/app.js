@@ -680,7 +680,7 @@ function onboardingPage(board) {
   }
   if (board.onboarding === 'roles') {
     view.innerHTML = heading('Choose your roles', 'Select the roles you play to finish setting up Warband.') +
-      '<section class="panel">' + expertiseForm(board) + '</section><div class="actions profile-roles">' + signOut + '</div>';
+      '<section class="panel">' + expertiseForm(board, '', '', 'join', signOut) + '</section>';
     return;
   }
   view.innerHTML = heading('Link your Albion character', board.guest ? 'Enter the exact name of a character outside ' + esc(board.guild) + '.' :
@@ -1023,13 +1023,13 @@ function setupAlbionProfile(panel, memberId, guests) {
   tabs.forEach(button => button.addEventListener('click', () => select(button.dataset.profileTab)));
   select('kills');
 }
-function expertiseForm(board, partyId = '', role = '', action = 'join') {
+function expertiseForm(board, partyId = '', role = '', action = 'join', extraActions = '') {
   return '<form class="form-grid' + (partyId ? ' dialog-body' : '') + '" data-form="expertise" data-join-party="' +
     esc(partyId) + '" data-join-role="' + esc(role) + '" data-join-action="' + esc(action) + '"><fieldset class="expertise"><legend>Select all that apply</legend>' +
     board.expertiseRoles.map(name => '<label class="check"><input type="checkbox" name="expertise" value="' + esc(name) +
       '"' + (board.expertise.includes(name) ? ' checked' : '') + '>' + esc(name) + '</label>').join('') +
     '</fieldset>' + errorLine + '<div class="actions"><button class="button primary">' +
-    (partyId ? action === 'waitlist' ? 'Save roles and join waitlist' : 'Save roles and claim slot' : 'Save roles') + '</button></div></form>';
+    (partyId ? action === 'waitlist' ? 'Save roles and join waitlist' : 'Save roles and claim slot' : 'Save roles') + '</button>' + extraActions + '</div></form>';
 }
 const buildSlots = { weapon: 'Weapon', offhand: 'Offhand', head: 'Head piece', chest: 'Chest piece',
   feet: 'Foot piece', cape: 'Cape', food: 'Food', potion: 'Potion' };
