@@ -16,7 +16,7 @@ export const helpTopics = {
   profile: { title: 'Profile and guild members', description: [
     '• In **Profile**, refresh your linked character, change your play roles, or sign out. **Save roles** syncs roles managed by Warband to Discord. Unlinking clears those selections and removes the assigned Warband roles.',
     '• Search **Guild members**, then select a profile for Warband roles, **Kills** and **Deaths**. The open tab refreshes as Albion publishes events. Expand a fight for gear, victim inventory, fame, fight type, and silver estimates.',
-    '• **Guests** lists linked guest characters and their guild. Open a guest to see the same combat tabs. Guests can join open parties. Guild-only parties are hidden on their board and reject Discord signups.',
+    '• **Guests** lists linked guests and their guild, with the same combat tabs. Guests join open parties only. The selected organizer role also grants guest organizers access to templates and all party listings; guild-only signups remain restricted.',
     '• The crown marks the configured guild master. The checkmark marks a linked Warband account. The scales mark organizer access.'
   ].join('\n') },
   organize: { title: 'Create and manage parties', description: [

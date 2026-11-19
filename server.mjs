@@ -214,7 +214,7 @@ async function context(req, res, board) {
   const guest = hasGuestRole(settings, member.roleIds, provisioned);
   return { profile, scope, member, settings, characterPrefix, characterKey, character, expertiseKey, availableRoles, organizerRole, guest,
     expertise: expertise.filter(name => availableRoles.includes(name)),
-    manager: !guest && canOrganize(member.admin, member.roleIds, organizerRole) };
+    manager: canOrganize(member.admin, member.roleIds, organizerRole) };
 }
 const linkedToGuild = (character, region, id) => Boolean(id && character?.region === region && character.guildId === id);
 const hasGuestRole = (settings, roles, provisioned) => Boolean(settings?.guestRoleId &&
@@ -753,11 +753,12 @@ function visible(party, ctx) {
     signups: signups.map(signup => ({ name: signup.name, role: signup.role, mine: signup.user === ctx.profile.id,
       ...(ctx.manager ? { signupId: signupRef(party, signup) } : {}) })) };
 }
-const canViewParty = (ctx, party, character) => !party.guildOnly ||
+const canJoinParty = (ctx, party, character) => !party.guildOnly ||
   (!ctx.guest && linkedToGuild(character, party.region, party.guildId));
+const canViewParty = (ctx, party, character) => ctx.manager || canJoinParty(ctx, party, character);
 const restrictedPartyMessage = party => 'This party is exclusive to ' + (party.guild || 'the configured Albion guild') + ' members.';
 async function partyViewerCharacter(ctx, parties) {
-  if (demo || !parties.some(party => party.guildOnly && canViewParty(ctx, party, ctx.character))) return ctx.character;
+  if (demo || ctx.manager || !parties.some(party => party.guildOnly && canViewParty(ctx, party, ctx.character))) return ctx.character;
   return characterFor(ctx.character.region, ctx.character.id, { verifyGuild: true });
 }
 const types = ['Roads of Avalon', 'PvE', 'PvP', 'Gathering', 'Faction Warfare', 'Other'];
@@ -902,7 +903,7 @@ async function signupCharacter(ctx, party) {
   if (party.guildOnly || (!demo && ctx.settings?.albionGuild && !ctx.guest)) {
     if (!character) throw new Problem(403, 'Link your Albion character before claiming a slot.');
     if (!demo) character = await characterFor(character.region, character.id);
-    if (!canViewParty(ctx, party, character)) throw new Problem(403, restrictedPartyMessage(party));
+    if (!canJoinParty(ctx, party, character)) throw new Problem(403, restrictedPartyMessage(party));
     if (!demo && ctx.settings?.albionGuild && character.guildId !== ctx.settings.albionGuild.id) {
       throw new Problem(403, guildMembershipError(ctx.settings.albionGuild));
     }
@@ -1482,7 +1483,7 @@ async function commandTemplates(event) {
   const { roles, permissions } = event.member;
   requireLoginRole(settings, roles, provisioned);
   const admin = /^\d{1,32}$/.test(permissions || '') && isAdmin(permissions);
-  requireManager({ manager: !hasGuestRole(settings, roles, provisioned) && canOrganize(admin, roles, organizerRoleId(settings, provisioned)) });
+  requireManager({ manager: canOrganize(admin, roles, organizerRoleId(settings, provisioned)) });
   const focused = event.data.options?.find(option => option.name === 'template' && option.focused);
   if (typeof focused?.value !== 'string') return [];
   const search = focused.value.trim().toLowerCase();
@@ -1501,7 +1502,7 @@ async function discordPlayerContext(profile) {
   const guest = hasGuestRole(settings, member.roleIds, provisioned);
   const ctx = { profile, scope: serverId(), member, settings, character, availableRoles, guest,
     expertise: expertise.filter(role => availableRoles.includes(role)),
-    manager: !guest && canOrganize(member.admin, member.roleIds, organizerRoleId(settings, provisioned)) };
+    manager: canOrganize(member.admin, member.roleIds, organizerRoleId(settings, provisioned)) };
   return ctx;
 }
 async function discordCommandContext(event) {
@@ -1786,7 +1787,7 @@ async function routes(req, res) {
     const id = url.searchParams.get('id');
     if (!/^[\w-]{22}$/.test(id || '')) throw new Problem(404, 'Party not found.');
     const party = findParty(await partiesFor(ctx), id);
-    if (ctx.guest && party.guildOnly) return json(res, { restricted: restrictedPartyMessage(party) });
+    if (ctx.guest && !ctx.manager && party.guildOnly) return json(res, { restricted: restrictedPartyMessage(party) });
     if (onboarding) throw new Problem(403, 'Finish setting up your Warband profile first.');
     const viewer = await partyViewerCharacter(ctx, [party]);
     return json(res, canViewParty(ctx, party, viewer) ? { party: visible(party, ctx) } : { restricted: restrictedPartyMessage(party) });
