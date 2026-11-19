@@ -162,7 +162,7 @@ function refreshViewKeepingFocus(container, redraw) {
     control.matches('input[type="checkbox"]') ? control.value : '', control.getAttribute('aria-label'),
     control.matches('button, a[href]') ? control.textContent.trim() : '']);
   const focused = container.contains(active) && active.matches(controls);
-  const row = focused && active.closest('.party');
+  const row = focused ? active.closest('.party') : null;
   const partyId = row?.dataset.party;
   const key = focused && controlKey(active);
   const selection = focused && active.selectionStart != null && [active.selectionStart, active.selectionEnd];

@@ -1668,13 +1668,19 @@ async function oauth(req, res, url) {
     const profile = { id: user.id, name: user.global_name || user.username };
     if (multiServer) {
       profile.servers = (await discordGuilds('Bearer ' + exchange.access_token)).map(({ id, name, owner, permissions }) => ({ id, name, owner, permissions }));
-      if (selected && profile.servers.some(server => server.id === selected)) {
-        await serverContext.run({ guildId: selected }, async () => {
+      let workspace = selected && profile.servers.some(server => server.id === selected) ? selected : '';
+      if (!selected) {
+        const connected = (await workspacesFor(profile)).filter(server => server.installed);
+        if (connected.length === 1) workspace = connected[0].id;
+      }
+      if (workspace) {
+        await serverContext.run({ guildId: workspace }, async () => {
           const member = await memberFor(profile);
-          const [settings, provisioned] = await Promise.all([get(selected + ':settings'), get(expertiseMappingKey({ scope: selected }), {})]);
+          const [settings, provisioned] = await Promise.all([get(workspace + ':settings'), get(expertiseMappingKey({ scope: workspace }), {})]);
           requireLoginRole(settings, member.roleIds, provisioned);
         });
-        profile.workspaceId = selected;
+        profile.workspaceId = workspace;
+        returnTo.set('server', workspace);
       }
       await remove(sessionKey(req));
       await session(res, profile, true);
