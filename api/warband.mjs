@@ -14,6 +14,7 @@ const paths = {
   expertise: '/api/expertise',
   party: '/api/party',
   templates: '/api/templates',
+  workspaces: '/api/workspaces',
   interactions: '/api/discord/interactions',
   action: '/api/party/action'
 };

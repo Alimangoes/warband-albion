@@ -22,7 +22,7 @@
     { "source": "/", "destination": "/api/warband?warbandRoute=home" },
     { "source": "/auth/discord", "destination": "/api/warband?warbandRoute=login" },
     { "source": "/auth/discord/callback", "destination": "/api/warband?warbandRoute=callback" },
-    { "source": "/api/:path(board|logout|options|roster|profile|settings|character|expertise|party|templates)", "destination": "/api/warband?warbandRoute=:path" },
+    { "source": "/api/:path(board|logout|options|roster|profile|settings|character|expertise|party|templates|workspaces)", "destination": "/api/warband?warbandRoute=:path" },
     { "source": "/api/party/action", "destination": "/api/warband?warbandRoute=action" },
     { "source": "/api/discord/interactions", "destination": "/api/warband?warbandRoute=interactions" }
   ]

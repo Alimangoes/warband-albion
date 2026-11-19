@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes, createHash, createPublicKey, verify } from 'node:crypto';
 import { waitUntil } from '@vercel/functions';
 import { createDiscordGuide, withRecordLock } from './discord-guide.mjs';
@@ -7,7 +8,7 @@ import { combatPrices, estimateSilver, priceCombatItems } from './combat-market.
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { openPostgres, openSQLite } from './storage.mjs';
+import { openPostgres, openSQLite, namespaceStore } from './storage.mjs';
 import { albion, canPost, discord, isAdmin, Problem, regions, request } from './providers.mjs';
 import { demoChannels, demoParties, demoRoles, demoRoster, demoSettings } from './demo.mjs';
 
@@ -16,13 +17,21 @@ const onVercel = process.env.VERCEL === '1';
 const vercelDomain = process.env.VERCEL_PROJECT_PRODUCTION_URL;
 const base = new URL(process.env.APP_URL || (onVercel && vercelDomain ? 'https://' + vercelDomain : 'http://localhost:' + port));
 const demo = onVercel ? process.env.DEMO_MODE === 'true' : process.env.DEMO_MODE !== 'false';
-const { DISCORD_CLIENT_ID: client, DISCORD_CLIENT_SECRET: secret, DISCORD_BOT_TOKEN: token, DISCORD_GUILD_ID: guildId } = process.env;
+const { DISCORD_CLIENT_ID: client, DISCORD_CLIENT_SECRET: secret, DISCORD_BOT_TOKEN: token, DISCORD_GUILD_ID: defaultGuildId } = process.env;
+const multiServer = process.env.MULTI_SERVER_MODE === 'true';
+const serverContext = new AsyncLocalStorage();
+const serverId = () => serverContext.getStore()?.guildId || defaultGuildId;
+const permittedServers = new Set((process.env.DISCORD_ALLOWED_GUILD_IDS || '').split(',').map(id => id.trim()).filter(Boolean));
+const allowedServer = id => snowflake(id) && (!multiServer || !permittedServers.size || permittedServers.has(id));
 const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname);
 const secure = base.protocol === 'https:';
 const snowflake = value => /^\d{17,20}$/.test(value || '');
 if ((!secure && !(loopback && base.protocol === 'http:')) || base.href !== base.origin + '/') throw new Error('Set APP_URL to the HTTPS public origin or an HTTP localhost origin.');
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-const setupRequired = (!demo && (!snowflake(client) || !snowflake(guildId) || !secret || !token))
+if (multiServer && onVercel && process.env.VERCEL_ENV === 'preview' && !process.env.DATA_NAMESPACE) {
+  throw new Error('Set DATA_NAMESPACE for the multi-server preview.');
+}
+const setupRequired = (!demo && (!snowflake(client) || (!multiServer && !snowflake(defaultGuildId)) || !secret || !token))
   || (onVercel && (!secure || !connectionString));
 if (setupRequired && !onVercel) throw new Error('Set the four DISCORD_ values in .env.');
 const bot = 'Bot ' + token;
@@ -34,15 +43,71 @@ const itemCatalog = new Map(JSON.parse(readFileSync(new URL('./public/albion-ite
 const buildSlots = ['weapon', 'offhand', 'head', 'chest', 'feet', 'cape', 'food', 'potion'];
 const roleEmoji = ['🛡️', '💚', '⚔️', '🏹', '🔮', '🔥', '❄️', '⚡', '💀', '🌿', '🎵', '🐺', '🦅', '🌀', '🪓', '🔨', '🗡️', '🧪', '👑', '⭐'];
 const expertiseRoles = ['noobie', 'ganker', 'fame whore', 'caller', 'support', 'healer', 'tank', 'DPS'];
-const expertiseRoleAllowed = (role, organizerId) => role && role.id !== guildId && role.id !== organizerId &&
+const expertiseRoleAllowed = (role, organizerId) => role && role.id !== serverId() && role.id !== organizerId &&
   !role.managed && role.permissions === '0';
 const hasChannelOverwrite = (channels, id) => channels.some(channel =>
   channel.permission_overwrites?.some(overwrite => overwrite.type === 0 && overwrite.id === id));
 const callback = new URL('/auth/discord/callback', base).href;
 const key = () => randomBytes(16).toString('base64url');
 const hash = value => createHash('sha256').update(value).digest('hex');
+function workspaceUrl(party) {
+  const url = new URL('/', base);
+  if (party) url.searchParams.set('party', party);
+  if (multiServer && snowflake(serverId())) url.searchParams.set('server', serverId());
+  return url;
+}
+function discordInviteUrl() {
+  const permissions = 1024n | 2048n | 16384n | 65536n | (1n << 28n) | (1n << 34n) | (1n << 35n) | (1n << 38n);
+  const url = new URL('https://discord.com/oauth2/authorize');
+  url.search = new URLSearchParams({ client_id: client, scope: 'bot applications.commands', permissions: String(permissions), integration_type: '0' });
+  if (permittedServers.size === 1) {
+    url.searchParams.set('guild_id', [...permittedServers][0]);
+    url.searchParams.set('disable_guild_select', 'true');
+  }
+  return url.href;
+}
+async function discordGuilds(authorization) {
+  const guilds = [];
+  let after = '';
+  for (let page = 0; page < 10; page++) {
+    const rows = await discord('/users/@me/guilds?limit=200' + (after ? '&after=' + after : ''), authorization);
+    if (!Array.isArray(rows)) throw new Problem(502, 'Discord returned an unexpected server list.');
+    guilds.push(...rows.filter(row => allowedServer(row.id)));
+    if (rows.length < 200) return guilds;
+    after = rows.at(-1).id;
+  }
+  throw new Problem(502, 'Discord returned too many server pages. Try again shortly.');
+}
+async function workspacesFor(profile) {
+  const installed = new Set((await discordGuilds(bot)).map(guild => guild.id));
+  return (profile.servers || []).filter(guild => allowedServer(guild.id)).map(guild => ({
+    id: guild.id, name: guild.name, installed: installed.has(guild.id),
+    canInstall: guild.owner || (/^\d+$/.test(guild.permissions || '') && isAdmin(guild.permissions))
+  }));
+}
+async function workspaceRoutes(req, res) {
+  if (!multiServer) throw new Problem(404, 'Page not found.');
+  const profile = await get(sessionKey(req));
+  if (!profile) throw new Problem(401, 'Sign in with Discord first.');
+  if (req.method === 'GET') return json(res, { servers: await workspacesFor(profile), inviteUrl: discordInviteUrl() });
+  const data = await body(req);
+  if (!allowedServer(data.id) || !profile.servers?.some(server => server.id === data.id)) {
+    throw new Problem(403, 'Choose a Discord server you belong to.');
+  }
+  await serverContext.run({ guildId: data.id }, async () => {
+    const member = await memberFor(profile);
+    const [settings, provisioned] = await Promise.all([get(data.id + ':settings'), get(expertiseMappingKey({ scope: data.id }), {})]);
+    requireLoginRole(settings, member.roleIds, provisioned);
+    if (!settings && !member.admin) throw new Problem(403, 'A server admin needs to complete Warband setup first.');
+  });
+  await db.change(sessionKey(req), null, Date.now() + demoAge * 1000, current => {
+    if (!current || current.id !== profile.id) throw new Problem(401, 'Sign in again.');
+    current.workspaceId = data.id;
+  });
+  return json(res, { selected: data.id });
+}
 
-const db = setupRequired ? null : connectionString ? openPostgres(connectionString) : openSQLite();
+const db = setupRequired ? null : namespaceStore(connectionString ? openPostgres(connectionString) : openSQLite(), process.env.DATA_NAMESPACE || '');
 const { get, put, remove } = db || {};
 const auth = demo ? 'albion_demo' : 'albion_session';
 const csrf = 'albion_oauth';
@@ -98,7 +163,7 @@ const organizerRoleName = ctx => ctx.member.allRoles?.find(role => role.id === c
 function discordAvatar(id, member) {
   if (!snowflake(id) || member?.user?.id !== id) return null;
   const { avatar, discriminator } = member.user;
-  if (imageHash(member.avatar)) return discordCdn + 'guilds/' + guildId + '/users/' + id + '/avatars/' + member.avatar + '.webp?size=64';
+  if (imageHash(member.avatar)) return discordCdn + 'guilds/' + serverId() + '/users/' + id + '/avatars/' + member.avatar + '.webp?size=64';
   if (imageHash(avatar)) return discordCdn + 'avatars/' + id + '/' + avatar + '.webp?size=64';
   const index = /^\d{4}$/.test(discriminator) && discriminator !== '0000'
     ? Number(discriminator) % 5 : (BigInt(id) >> 22n) % 6n;
@@ -106,18 +171,18 @@ function discordAvatar(id, member) {
 }
 async function memberFor(profile) {
   const [member, guild, roles] = await Promise.all([
-    discord('/guilds/' + guildId + '/members/' + profile.id, bot).catch(error => {
+    discord('/guilds/' + serverId() + '/members/' + profile.id, bot).catch(error => {
       if (error.status === 404) throw new Problem(403, 'Join the configured Discord server to access the board.');
       throw error;
     }),
-    discord('/guilds/' + guildId, bot),
-    discord('/guilds/' + guildId + '/roles', bot)
+    discord('/guilds/' + serverId(), bot),
+    discord('/guilds/' + serverId() + '/roles', bot)
   ]);
-  const held = roles.filter(role => role.id === guildId || member.roles.includes(role.id));
+  const held = roles.filter(role => role.id === serverId() || member.roles.includes(role.id));
   if (member.pending) throw new Problem(403, 'Complete Discord membership screening first.');
-  const serverIcon = imageHash(guild.icon) ? discordCdn + 'icons/' + guildId + '/' + guild.icon + '.webp?size=64' : null;
+  const serverIcon = imageHash(guild.icon) ? discordCdn + 'icons/' + serverId() + '/' + guild.icon + '.webp?size=64' : null;
   return { admin: discordAdmin(profile.id, guild.owner_id, held), ownerId: guild.owner_id, roleIds: member.roles, nickname: member.nick,
-    roles: held.filter(role => role.id !== guildId).map(role => role.name), server: guild.name, serverIcon,
+    roles: held.filter(role => role.id !== serverId()).map(role => role.name), server: guild.name, serverIcon,
     avatarUrl: discordAvatar(profile.id, member), allRoles: roles };
 }
 async function context(req, res, board) {
@@ -129,7 +194,11 @@ async function context(req, res, board) {
     await session(res, profile);
   }
   if (!profile) return null;
-  const scope = demo ? profile.id : guildId;
+  if (multiServer && !demo && !profile.workspaceId) return { profile, workspaceSelection: true };
+  if (multiServer && !demo && (!allowedServer(profile.workspaceId) || !profile.servers?.some(server => server.id === profile.workspaceId))) {
+    throw new Problem(403, 'Choose a Discord server you belong to.');
+  }
+  const scope = demo ? profile.id : serverId();
   const member = demo ? { admin: true, roleIds: ['1'], roles: ['Guild Officer'], server: demoSettings.server } : await memberFor(profile);
   const characterPrefix = scope + ':character:';
   const characterKey = characterPrefix + profile.id;
@@ -211,13 +280,13 @@ async function setupExpertiseRoles(ctx, data) {
   });
 }
 async function configureDiscordExpertise(ctx, catalog, action, name) {
-  const guildPath = '/guilds/' + guildId;
+  const guildPath = '/guilds/' + serverId();
   const [roles, channels, identity, settings, saved] = await Promise.all([
     discord(guildPath + '/roles', bot), discord(guildPath + '/channels', bot), discord('/users/@me', bot),
     get(ctx.scope + ':settings'), get(expertiseMappingKey(ctx))
   ]);
   const member = await discord(guildPath + '/members/' + identity.id, bot);
-  const botRoles = roles.filter(role => role.id === guildId || member.roles.includes(role.id));
+  const botRoles = roles.filter(role => role.id === serverId() || member.roles.includes(role.id));
   const permissions = botRoles.reduce((bits, role) => bits | BigInt(role.permissions), 0n);
   if (!(permissions & (8n | 268435456n))) {
     throw new Problem(409, 'Enable Manage Roles on the Warband bot role in Discord, then try again.');
@@ -279,9 +348,9 @@ async function syncExpertise(ctx, selected, catalog) {
   const [settings, saved] = await Promise.all([get(ctx.scope + ':settings'), get(expertiseMappingKey(ctx))]);
   const mapping = { ...settings?.expertiseRoleIds, ...saved };
   const [member, channels, currentRoles] = await Promise.all([
-    discord('/guilds/' + guildId + '/members/' + ctx.profile.id, bot),
-    discord('/guilds/' + guildId + '/channels', bot),
-    discord('/guilds/' + guildId + '/roles', bot)
+    discord('/guilds/' + serverId() + '/members/' + ctx.profile.id, bot),
+    discord('/guilds/' + serverId() + '/channels', bot),
+    discord('/guilds/' + serverId() + '/roles', bot)
   ]).catch(() => []);
   if (!member || member.pending || !Array.isArray(channels)) return { synced: false };
   const roles = catalog.map(name => currentRoles.find(role => role.id === mapping[name]));
@@ -292,7 +361,7 @@ async function syncExpertise(ctx, selected, catalog) {
     if (!valid(role)) return;
     const wantsRole = selected.includes(catalog[i]);
     if (wantsRole === member.roles.includes(role.id)) return;
-    return discord('/guilds/' + guildId + '/members/' + ctx.profile.id + '/roles/' + role.id, bot,
+    return discord('/guilds/' + serverId() + '/members/' + ctx.profile.id + '/roles/' + role.id, bot,
       undefined, wantsRole ? 'PUT' : 'DELETE');
   }));
   return { synced: !missing && changes.every(result => result.status === 'fulfilled'), ...(missing ? { reason: 'setup' } : {}) };
@@ -301,9 +370,9 @@ async function removeDiscordExpertise(ctx) {
   if (demo) return;
   const [settings, provisioned] = await Promise.all([get(ctx.scope + ':settings'), get(expertiseMappingKey(ctx), {})]);
   const roleIds = expertiseRoleIds(settings, provisioned);
-  const memberPath = '/guilds/' + guildId + '/members/' + ctx.profile.id;
+  const memberPath = '/guilds/' + serverId() + '/members/' + ctx.profile.id;
   const member = await discord(memberPath, bot);
-  const held = member.roles.filter(id => snowflake(id) && roleIds.has(id) && id !== guildId &&
+  const held = member.roles.filter(id => snowflake(id) && roleIds.has(id) && id !== serverId() &&
     id !== settings?.roleId && !protectedAccessRole(settings, id));
   const results = await Promise.allSettled(held.map(id => discord(memberPath + '/roles/' + id, bot, undefined, 'DELETE')));
   const failed = results.filter(result => result.status === 'rejected');
@@ -315,22 +384,27 @@ async function removeDiscordExpertise(ctx) {
   }
 }
 const guidePermissions = 1n << 14n; // Embed Links
-const discordGuide = demo || !db ? null : createDiscordGuide({ db, bot, base, guildId });
+const guides = new Map();
+function discordGuide() {
+  if (demo || !db || !snowflake(serverId())) return null;
+  if (!guides.has(serverId())) guides.set(serverId(), createDiscordGuide({ db, bot, base: workspaceUrl(), guildId: serverId() }));
+  return guides.get(serverId());
+}
 async function options(ctx) {
   requireManager(ctx, true);
   if (demo) return { roles: demoRoles, channels: demoChannels, expertiseRoles: [] };
   const [channels, identity, provisioned, guide] = await Promise.all([
-    discord('/guilds/' + guildId + '/channels', bot), discord('/users/@me', bot), get(expertiseMappingKey(ctx), {}), discordGuide.status()
+    discord('/guilds/' + serverId() + '/channels', bot), discord('/users/@me', bot), get(expertiseMappingKey(ctx), {}), discordGuide().status()
   ]);
-  const botMember = await discord('/guilds/' + guildId + '/members/' + identity.id, bot);
+  const botMember = await discord('/guilds/' + serverId() + '/members/' + identity.id, bot);
   const roles = ctx.member.allRoles;
   const selfAssigned = expertiseRoleIds(ctx.settings, provisioned);
   const compact = list => list.map(({ id, name }) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
-  return { roles: compact(roles.filter(role => role.id !== guildId && !role.managed && !selfAssigned.has(role.id))),
+  return { roles: compact(roles.filter(role => role.id !== serverId() && !role.managed && !selfAssigned.has(role.id))),
     expertiseRoles: compact(roles.filter(role => expertiseRoleAllowed(role) && !protectedAccessRole(ctx.settings, role.id) && !hasChannelOverwrite(channels, role.id))),
-    channels: channels.filter(channel => [0, 5].includes(channel.type) && canPost(guildId, roles, botMember, channel))
+    channels: channels.filter(channel => [0, 5].includes(channel.type) && canPost(serverId(), roles, botMember, channel))
       .map(channel => ({ id: channel.id, name: channel.name, type: channel.type,
-        canPostGuide: channel.type === 0 && canPost(guildId, roles, botMember, channel, guidePermissions) }))
+        canPostGuide: channel.type === 0 && canPost(serverId(), roles, botMember, channel, guidePermissions) }))
       .sort((a, b) => a.name.localeCompare(b.name)), guide };
 }
 async function saveDiscordGuide(ctx, data) {
@@ -342,14 +416,14 @@ async function saveDiscordGuide(ctx, data) {
     if (!channel) throw new Problem(400, 'Choose a Discord text channel where Warband can post.');
     if (!channel.canPostGuide) throw new Problem(403, 'Give Warband Embed Links in the selected channel.');
   }
-  await discordGuide.save(data.enabled ? data.channelId : '');
-  return discordGuide.status();
+  await discordGuide().save(data.enabled ? data.channelId : '');
+  return discordGuide().status();
 }
-let nextGuideUpdate = 0;
+const nextGuideUpdate = new Map();
 function updatePublishedGuide() {
-  if (!discordGuide || Date.now() < nextGuideUpdate) return;
-  nextGuideUpdate = Date.now() + 30000;
-  const update = discordGuide.updatePublishedCopy().then(updated => {
+  if (!discordGuide() || Date.now() < (nextGuideUpdate.get(serverId()) || 0)) return;
+  nextGuideUpdate.set(serverId(), Date.now() + 30000);
+  const update = discordGuide().updatePublishedCopy().then(updated => {
     if (updated) console.info('Warband published the revised Discord guide.');
   }).catch(error => {
     if (error.status !== 409) console.warn('Warband could not update the existing Discord guide.', { status: error.status });
@@ -430,7 +504,7 @@ async function rosterFor(ctx, summary = false) {
   async function refreshMember({ id, member }) {
     let account;
     try {
-      account = await discord('/guilds/' + guildId + '/members/' + id, bot);
+      account = await discord('/guilds/' + serverId() + '/members/' + id, bot);
     } catch (error) {
       if (error.upstreamStatus === 404) {
         member.avatarUrl = null;
@@ -442,7 +516,7 @@ async function rosterFor(ctx, summary = false) {
     const url = discordAvatar(id, account);
     if (url) useAvatar(id, member, url);
     if (account?.user?.id !== id || account.pending || !Array.isArray(account.roles)) return;
-    const held = ctx.member.allRoles.filter(role => role.id === guildId || account.roles.includes(role.id));
+    const held = ctx.member.allRoles.filter(role => role.id === serverId() || account.roles.includes(role.id));
     member.organizer = canOrganize(discordAdmin(id, ctx.member.ownerId, held), account.roles, ctx.organizerRole);
   }
   for (let i = 0; i < lookups.length && Date.now() < deadline; i += 8) {
@@ -732,7 +806,7 @@ function partySchedule(data, current) {
 }
 const partyClosed = party => party.cancelled || party.finished || party.startedAt || (!party.waitUntilFull && Date.parse(party.starts) <= Date.now());
 const mentionChoices = ctx => demo ? demoRoles : ctx.member.allRoles
-  .filter(role => role.id !== guildId && !role.managed).map(({ id, name }) => ({ id, name }))
+  .filter(role => role.id !== serverId() && !role.managed).map(({ id, name }) => ({ id, name }))
   .sort((a, b) => a.name.localeCompare(b.name));
 function announcementOptions(data, ctx, previous = {}) {
   const announcementThread = data.announcementThread ?? (previous.announcementThread === true);
@@ -943,7 +1017,7 @@ function announcementCard(party) {
   const filled = partyFull(party);
   const schedule = party.waitUntilFull ? (status ? 'No scheduled start' : filled ? '**Ready · All slots filled**' : '**Waiting for all slots to fill**') :
     '<t:' + stamp + ':F> (<t:' + stamp + ':R>)';
-  const link = new URL('/?party=' + party.id, base).href;
+  const link = workspaceUrl(party.id).href;
   return {
     author: { name: 'ALBION ONLINE · WARBAND' },
     title: party.title,
@@ -1013,7 +1087,7 @@ async function announce(ctx, id, allowClosed = false, refresh = false) {
       ...(messageId ? {} : { nonce: id, enforce_nonce: true })
     }, messageId ? 'PATCH' : 'POST');
     result = { announcement: 'sent', announcementVersion: 2, messageId: message.id,
-      messageUrl: 'https://discord.com/channels/' + guildId + '/' + destination + '/' + message.id };
+      messageUrl: 'https://discord.com/channels/' + serverId() + '/' + destination + '/' + message.id };
   } catch (error) {
     result = { announcement: 'failed', deliveryError: error instanceof Problem ? error.message : 'Discord delivery could not be confirmed.' };
   }
@@ -1286,9 +1360,9 @@ const body = async req => parseBody(await rawBody(req));
 async function interactionSignup(event, id, roleKey) {
   const user = event.member?.user;
   if (!snowflake(user?.id) || user.bot || event.member.pending) throw new Problem(403, 'Join the Discord server first.');
-  const prefix = guildId + ':';
+  const prefix = serverId() + ':';
   const profile = { id: user.id, name: event.member.nick || user.global_name || user.username };
-  const ctx = { profile, scope: guildId };
+  const ctx = { profile, scope: serverId() };
   const [parties, expertise, character, settings, provisioned] = await Promise.all([
     partiesFor(ctx), get(prefix + 'expertise:' + user.id, []), get(prefix + 'character:' + user.id), get(prefix + 'settings'),
     get(expertiseMappingKey(ctx), {})
@@ -1308,7 +1382,7 @@ async function interactionSignup(event, id, roleKey) {
   if (!leaving && role < 0) throw new Problem(409, 'This party button is out of date.');
   if (ctx.guest && party.guildOnly) throw new Problem(403, restrictedPartyMessage(party));
   if (onboardingStep(ctx)) {
-    throw new Problem(409, 'Finish setting up your Warband profile at ' + new URL('/?party=' + id, base).href + ' before signing up.');
+    throw new Problem(409, 'Finish setting up your Warband profile at ' + workspaceUrl(id).href + ' before signing up.');
   }
   return partyAction(ctx, { id, action: leaving ? 'leave' : 'join', role },
     { roleKey, messageId: event.message.id, channelId: event.channel_id });
@@ -1334,11 +1408,11 @@ const rosterCommands = [
       { name: 'player', type: 6, description: 'Choose the Discord player whose signup to remove', required: true }
     ] }
 ];
-let nextCommandCheck = 0;
+const nextCommandCheck = new Map();
 async function syncDiscordCommands() {
-  const commandsPath = '/applications/' + client + '/guilds/' + guildId + '/commands';
-  const stateKey = guildId + ':discord-command-sync:' + client;
-  const [templates, previous] = await Promise.all([get(guildId + ':templates', []), get(stateKey, {})]);
+  const commandsPath = '/applications/' + client + '/guilds/' + serverId() + '/commands';
+  const stateKey = serverId() + ':discord-command-sync:' + client;
+  const [templates, previous] = await Promise.all([get(serverId() + ':templates', []), get(stateKey, {})]);
   const publishEnabled = templates.length > 0;
   const desired = hash(JSON.stringify([helpCommand, ...rosterCommands, publishEnabled ? warbandCommand : null]));
   const needsSync = state => Math.max(state.inFlightUntil || 0, state.retryAfter || 0) <= Date.now() &&
@@ -1373,8 +1447,8 @@ async function syncDiscordCommands() {
   console.info('Warband Discord commands synced.', { help: true, warband: publishEnabled });
 }
 function queueDiscordCommandSync(force = false) {
-  if (demo || !interactionKey || (!force && Date.now() < nextCommandCheck)) return;
-  nextCommandCheck = Date.now() + 30000;
+  if (demo || !interactionKey || (!force && Date.now() < (nextCommandCheck.get(serverId()) || 0))) return;
+  nextCommandCheck.set(serverId(), Date.now() + 30000);
   const work = syncDiscordCommands().catch(() => console.warn('Warband Discord command sync could not be saved.'));
   if (onVercel) waitUntil(work);
   else return work;
@@ -1403,7 +1477,7 @@ function discordOrganizer(event) {
 async function commandTemplates(event) {
   discordOrganizer(event);
   const [settings, provisioned] = await Promise.all([
-    get(guildId + ':settings'), get(expertiseMappingKey({ scope: guildId }), {})
+    get(serverId() + ':settings'), get(expertiseMappingKey({ scope: serverId() }), {})
   ]);
   const { roles, permissions } = event.member;
   requireLoginRole(settings, roles, provisioned);
@@ -1412,20 +1486,20 @@ async function commandTemplates(event) {
   const focused = event.data.options?.find(option => option.name === 'template' && option.focused);
   if (typeof focused?.value !== 'string') return [];
   const search = focused.value.trim().toLowerCase();
-  const templates = await get(guildId + ':templates', []);
+  const templates = await get(serverId() + ':templates', []);
   return templates.filter(template => template.title.toLowerCase().includes(search)).slice(0, 25)
     .map(template => ({ name: template.title, value: template.id }));
 }
 async function discordPlayerContext(profile) {
-  const prefix = guildId + ':';
+  const prefix = serverId() + ':';
   const [member, settings, provisioned, character, expertise, availableRoles] = await Promise.all([
-    memberFor(profile), get(prefix + 'settings'), get(expertiseMappingKey({ scope: guildId }), {}),
+    memberFor(profile), get(prefix + 'settings'), get(expertiseMappingKey({ scope: serverId() }), {}),
     get(prefix + 'character:' + profile.id), get(prefix + 'expertise:' + profile.id, []),
     get(prefix + 'expertise-catalog', expertiseRoles)
   ]);
   requireLoginRole(settings, member.roleIds, provisioned);
   const guest = hasGuestRole(settings, member.roleIds, provisioned);
-  const ctx = { profile, scope: guildId, member, settings, character, availableRoles, guest,
+  const ctx = { profile, scope: serverId(), member, settings, character, availableRoles, guest,
     expertise: expertise.filter(role => availableRoles.includes(role)),
     manager: !guest && canOrganize(member.admin, member.roleIds, organizerRoleId(settings, provisioned)) };
   return ctx;
@@ -1485,7 +1559,7 @@ async function manageRosterFromDiscord(event) {
 async function publishFromDiscord(event) {
   const ctx = await discordCommandContext(event);
   const { profile } = ctx;
-  const prefix = guildId + ':';
+  const prefix = serverId() + ':';
   await throttle('publish:' + profile.id, 12);
   const input = Object.fromEntries(event.data.options?.map(option => [option.name, option.value]) ?? []);
   const selected = field(input.template, 1, 80, 'Template');
@@ -1496,7 +1570,7 @@ async function publishFromDiscord(event) {
   const note = field(input.note, 0, 420, 'Party notes');
   const { party } = await publishParty(ctx, { ...template, summary: note || template.summary || '',
     starts: template.waitUntilFull ? null : discordStart(input.start), nonce: event.id });
-  const link = new URL('/?party=' + party.id, base).href;
+  const link = workspaceUrl(party.id).href;
   const schedule = party.waitUntilFull ? ' to start when all slots are filled' : ' for <t:' + Math.floor(Date.parse(party.starts) / 1000) + ':F>';
   return 'Published **' + discordText(party.title) + '**' + schedule + '. ' +
     (party.announcement === 'failed' ? 'The Discord announcement failed. Open the party in Warband to retry. ' : '') + link;
@@ -1525,11 +1599,18 @@ async function discordInteraction(req, res) {
   const event = parseBody(raw);
   if (event.application_id !== client) throw new Problem(401, 'Invalid Discord application.');
   if (event.type === 1) return json(res, { type: 1 });
-  if (event.type === 2 && event.guild_id === guildId && event.data?.name === helpCommand.name && event.data.type === 1) {
-    return json(res, { type: 4, data: helpReply(event, base.href) });
+  if (multiServer) {
+    if (!allowedServer(event.guild_id)) throw new Problem(403, 'This server is not enabled for this Warband deployment.');
+    return serverContext.run({ guildId: event.guild_id }, () => respondDiscordInteraction(event, res));
   }
-  const isWarband = event.guild_id === guildId && event.data?.name === warbandCommand.name && event.data.type === 1;
-  const isRosterCommand = event.guild_id === guildId && event.data?.type === 1 && rosterCommands.some(command => command.name === event.data.name);
+  return respondDiscordInteraction(event, res);
+}
+async function respondDiscordInteraction(event, res) {
+  if (event.type === 2 && event.guild_id === serverId() && event.data?.name === helpCommand.name && event.data.type === 1) {
+    return json(res, { type: 4, data: helpReply(event, workspaceUrl().href) });
+  }
+  const isWarband = event.guild_id === serverId() && event.data?.name === warbandCommand.name && event.data.type === 1;
+  const isRosterCommand = event.guild_id === serverId() && event.data?.type === 1 && rosterCommands.some(command => command.name === event.data.name);
   if (event.type === 4) {
     const choices = isWarband ? await commandTemplates(event).catch(() => []) :
       isRosterCommand ? await rosterCommandChoices(event).catch(() => []) : [];
@@ -1537,7 +1618,7 @@ async function discordInteraction(req, res) {
   }
   const match = /^wb:([\w-]{22}):([a-f0-9]{20}|leave|start)$/.exec(event.data?.custom_id || '');
   const command = event.type === 2 && (isWarband || isRosterCommand);
-  const signup = event.type === 3 && event.guild_id === guildId && match && snowflake(event.message?.id);
+  const signup = event.type === 3 && event.guild_id === serverId() && match && snowflake(event.message?.id);
   if ((!command && !signup) || !snowflake(event.id) || !/^[\w.-]{1,256}$/.test(event.token || '')) {
     return json(res, { type: 4, data: { content: 'This Warband action is unavailable.', flags: 64 } });
   }
@@ -1555,16 +1636,21 @@ async function oauth(req, res, url) {
   if (url.pathname === '/auth/discord') {
     const state = key();
     const party = url.searchParams.get('party');
-    await put('oauth:' + hash(state), /^[\w-]{22}$/.test(party || '') ? party : '', Date.now() + 600000);
+    const selected = url.searchParams.get('server');
+    const returnParty = /^[\w-]{22}$/.test(party || '') ? party : '';
+    await put('oauth:' + hash(state), multiServer ? { party: returnParty, server: allowedServer(selected) ? selected : '' } : returnParty, Date.now() + 600000);
     res.setHeader('Set-Cookie', cookie(csrf, state, 600));
-    const query = new URLSearchParams({ client_id: client, redirect_uri: callback, response_type: 'code', scope: 'identify', state });
+    const query = new URLSearchParams({ client_id: client, redirect_uri: callback, response_type: 'code', scope: multiServer ? 'identify guilds' : 'identify', state });
     return redirect(res, 'https://discord.com/oauth2/authorize?' + query);
   }
   const state = url.searchParams.get('state');
   const code = url.searchParams.get('code');
   if (!state || state !== readCookie(req, csrf)) return redirect(res, '/?login=cancelled');
-  const party = await db.take('oauth:' + hash(state));
+  const savedReturn = await db.take('oauth:' + hash(state));
+  const party = multiServer ? savedReturn?.party ?? null : savedReturn;
+  const selected = multiServer ? savedReturn?.server : '';
   const returnTo = new URLSearchParams(party ? { party } : {});
+  if (selected) returnTo.set('server', selected);
   const loginError = reason => {
     returnTo.set('login', reason);
     return redirect(res, '/?' + returnTo);
@@ -1580,9 +1666,23 @@ async function oauth(req, res, url) {
     const user = await discord('/users/@me', 'Bearer ' + exchange.access_token);
     if (!snowflake(user.id)) throw new Problem(502, 'Discord returned an unexpected user.');
     const profile = { id: user.id, name: user.global_name || user.username };
+    if (multiServer) {
+      profile.servers = (await discordGuilds('Bearer ' + exchange.access_token)).map(({ id, name, owner, permissions }) => ({ id, name, owner, permissions }));
+      if (selected && profile.servers.some(server => server.id === selected)) {
+        await serverContext.run({ guildId: selected }, async () => {
+          const member = await memberFor(profile);
+          const [settings, provisioned] = await Promise.all([get(selected + ':settings'), get(expertiseMappingKey({ scope: selected }), {})]);
+          requireLoginRole(settings, member.roleIds, provisioned);
+        });
+        profile.workspaceId = selected;
+      }
+      await remove(sessionKey(req));
+      await session(res, profile, true);
+      return redirect(res, returnTo.size ? '/?' + returnTo : '/');
+    }
     stage = 'server membership lookup';
     const [member, settings, provisioned] = await Promise.all([
-      memberFor(profile), get(guildId + ':settings'), get(expertiseMappingKey({ scope: guildId }), {})
+      memberFor(profile), get(serverId() + ':settings'), get(expertiseMappingKey({ scope: serverId() }), {})
     ]);
     requireLoginRole(settings, member.roleIds, provisioned);
     stage = 'session storage';
@@ -1633,6 +1733,7 @@ async function routes(req, res) {
   }
   await cleanup();
   await throttle('api:' + clientAddress(req), 240);
+  if (path === '/api/workspaces') return workspaceRoutes(req, res);
   const ctx = await context(req, res, route === 'GET /api/board').catch(async error => {
     if (error instanceof LoginRoleRequired) {
       await remove(sessionKey(req));
@@ -1642,15 +1743,18 @@ async function routes(req, res) {
     throw error;
   });
   if (route === 'GET /api/board') {
+    if (ctx?.workspaceSelection) return json(res, { signedIn: true, onboarding: 'workspace', multiServer: true,
+      workspaces: await workspacesFor(ctx.profile), inviteUrl: discordInviteUrl() });
+    if (multiServer && !ctx) return json(res, { demo, signedIn: false, multiServer: true, inviteUrl: discordInviteUrl() });
     await updatePublishedGuide();
     await queueDiscordCommandSync();
-    if (!ctx) return json(res, { demo, signedIn: false });
+    if (!ctx) return json(res, { demo, signedIn: false, multiServer, ...(multiServer ? { inviteUrl: discordInviteUrl() } : {}) });
     if (ctx.loginError) return json(res, { demo, signedIn: false, loginError: ctx.loginError });
     const { settings, profile, character, member, expertise, availableRoles } = ctx;
     const requireMatchingNickname = requiresMatchingNickname(settings);
     const onboarding = onboardingStep(ctx);
     if (onboarding) {
-      return json(res, { signedIn: true, onboarding, expertise, expertiseRoles: availableRoles,
+      return json(res, { signedIn: true, onboarding, multiServer, expertise, expertiseRoles: availableRoles,
         guild: settings?.albionGuild?.name, region: settings?.region, requireMatchingNickname,
         guest: ctx.guest,
         guildError: character && onboarding === 'character' && settings?.albionGuild
@@ -1661,7 +1765,7 @@ async function routes(req, res) {
     const viewer = await partyViewerCharacter(ctx, parties).catch(() => null);
     const boardSettings = settings && !ctx.manager && !member.admin
       ? { region: settings.region, channel: settings.channel, albionGuild: settings.albionGuild } : settings;
-    return json(res, { demo, settings: boardSettings, guestsEnabled: Boolean(settings?.guestRoleId), requireMatchingNickname,
+    return json(res, { demo, multiServer, workspaceId: multiServer ? serverId() : undefined, settings: boardSettings, guestsEnabled: Boolean(settings?.guestRoleId), requireMatchingNickname,
       profile: { name: profile.name, avatarUrl: member.avatarUrl ?? null }, character, signedIn: true,
       expertise: ctx.expertise, expertiseRoles: availableRoles,
       mentionRoles: ctx.manager ? mentionChoices(ctx) : [],
@@ -1670,6 +1774,7 @@ async function routes(req, res) {
       parties: parties.filter(party => canViewParty(ctx, party, viewer)).map(party => visible(party, ctx)) });
   }
   if (!ctx) throw new Problem(401, 'Sign in with Discord first.');
+  if (ctx.workspaceSelection) throw new Problem(403, 'Select a Discord server first.');
   const onboarding = onboardingStep(ctx);
   if (route === 'GET /api/party') {
     const id = url.searchParams.get('id');
@@ -1882,7 +1987,8 @@ export async function handleRequest(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   try {
-    await routes(req, res);
+    const profile = multiServer && db ? await get(sessionKey(req)) : null;
+    await serverContext.run({ guildId: profile?.workspaceId || defaultGuildId }, () => routes(req, res));
   } catch (error) {
     if (!(error instanceof Problem)) console.error(error.name + ' while handling request');
     if (res.headersSent) return res.end();

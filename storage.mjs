@@ -3,6 +3,25 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import pg from 'pg';
 
+export function namespaceStore(store, namespace) {
+  if (!namespace) return store;
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(namespace)) throw new Error('Invalid database namespace.');
+  const prefix = namespace + ':';
+  return {
+    get: (key, ...args) => store.get(prefix + key, ...args),
+    put: (key, ...args) => store.put(prefix + key, ...args),
+    remove: key => store.remove(prefix + key),
+    take: key => store.take(prefix + key),
+    change: (key, ...args) => store.change(prefix + key, ...args),
+    entries: async key => (await store.entries(prefix + key)).map(([key, value]) => [key.slice(prefix.length), value]),
+    removePair: (first, second) => store.removePair(prefix + first, prefix + second),
+    removeRoleSelection: (key, ...args) => store.removeRoleSelection(prefix + key, ...args),
+    linkCharacter: (key, record, ...args) => store.linkCharacter(prefix + key, prefix + record, ...args),
+    sweep: store.sweep,
+    ...(store.limit ? { limit: (key, ...args) => store.limit(prefix + key, ...args) } : {})
+  };
+}
+
 const schema = 'CREATE TABLE IF NOT EXISTS records (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires BIGINT)';
 const select = 'SELECT value FROM records WHERE key=$1 AND (expires IS NULL OR expires>$2)';
 const selectPrefix = "SELECT key,value FROM records WHERE key LIKE $1 ESCAPE '!' AND (expires IS NULL OR expires>$2)";

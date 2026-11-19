@@ -1,6 +1,14 @@
 # Warband · Albion Online Party Organizer
 
-Warband is a Node.js and SQLite web app for one Discord server per deployment. Discord members sign in, link an Albion character, and claim a role in a scheduled party. Organizers set named roles and slot counts, and publishing posts a signup link to the selected Discord channel.
+Warband is a Node.js web app with SQLite locally and Postgres on Vercel. It supports one Discord server or separate server workspaces in the same deployment. Discord members sign in, link an Albion character, and claim a party role. Organizers configure roles, templates, and announcements for their own server.
+
+## Multiple Discord servers
+
+Set `MULTI_SERVER_MODE=true` to enable the server picker. Set `DISCORD_ALLOWED_GUILD_IDS` to a comma-separated list of approved Discord server IDs to restrict access; leaving it blank allows any server where the bot is installed. Keep `DISCORD_GUILD_ID` as the original server ID and leave production `DATA_NAMESPACE` unset to preserve existing data.
+
+Install the same deployment's bot in each server using **Add to Discord**. A server administrator signs in, opens that server, and chooses its Albion region and guild, organizer role, and announcement channel in Settings. Parties, templates, linked characters, member roles, settings, and Discord commands are scoped to that server.
+
+When upgrading from single-server mode, existing users must sign out and sign in again to grant Discord's server-list permission. Existing guild data is retained. A separate preview application uses its own credentials and a unique `DATA_NAMESPACE`; its bot installation and settings do not automatically transfer to production.
 
 ## Run the demo
 

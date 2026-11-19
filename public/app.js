@@ -208,7 +208,7 @@ const settingsSnapshot = board => JSON.stringify([board.settings, board.canConfi
   board.roles, board.server, board.expertiseRoles]);
 const profileSnapshot = board => JSON.stringify([board.profile, board.character, board.roles, board.expertise,
   board.expertiseRoles, board.settings?.region]);
-const onboardingSnapshot = board => JSON.stringify([board.guild, board.region, board.guest, board.guildError, board.expertise, board.expertiseRoles]);
+const onboardingSnapshot = board => JSON.stringify([board.guild, board.region, board.guest, board.guildError, board.expertise, board.expertiseRoles, board.workspaces]);
 let renderedSettings;
 let renderedProfile;
 const nextRosterRefresh = new Map();
@@ -373,6 +373,7 @@ function updateProfileBadges(board) {
 }
 function shell() {
   const board = state.board;
+  $('#workspace-switch').hidden = !board.multiServer;
   updateOrganizerNav(board);
   updateProfileAvatar(board);
   $('#mode').hidden = !board.demo;
@@ -435,6 +436,7 @@ function boardPage(board) {
 }
 async function render() {
   const board = state.board;
+  if (board.multiServer && !board.onboarding && board.canConfigure && !board.settings) state.page = 'settings';
   if (state.page === 'settings' && !showsSettings(board)) state.page = 'board';
   const page = state.page;
   const ready = board.signedIn && !board.onboarding;
@@ -449,6 +451,10 @@ async function render() {
     rosterRequests.clear();
     const query = new URLSearchParams(location.search);
     const party = query.get('party');
+    const server = query.get('server');
+    const loginParams = new URLSearchParams();
+    if (party) loginParams.set('party', party);
+    if (server) loginParams.set('server', server);
     const reason = query.get('login');
     const accessMessage = reason === 'server' ? 'To sign in to Warband, you must be a member of the Discord server and complete any required membership screening.' :
       reason === 'role' ? 'To sign in to Warband, you must be a member of the Discord server and have the required access role. Please contact a server administrator for assistance.' : '';
@@ -456,7 +462,8 @@ async function render() {
       cancelled: 'Sign-in was cancelled or expired.' })[reason];
     view.innerHTML = '<section class="hero"><div>' + albionLogo + '<h1>Party Board</h1><p>Sign in with Discord to access your guild’s parties.</p>' +
       (message ? '<p class="error" role="alert">' + esc(message) + '</p>' : '') +
-      '<a class="button primary" data-discord-login href="/auth/discord' + (party ? '?party=' + encodeURIComponent(party) : '') + '">Continue with Discord ' + icon('arrow') + '</a>' +
+      '<div class="actions"><a class="button primary" data-discord-login href="/auth/discord' + (loginParams.size ? '?' + esc(loginParams) : '') + '">Continue with Discord ' + icon('arrow') + '</a>' +
+      (board.inviteUrl ? '<a class="button outline" href="' + esc(board.inviteUrl) + '" target="_blank" rel="noopener noreferrer">Add to Discord ' + icon('plus') + '</a>' : '') + '</div>' +
       (accessMessage ? '<p class="login-access-message" role="alert">' + accessMessage + '</p>' : '') + '</div></section>';
     return;
   }
@@ -649,8 +656,23 @@ function discardRoleRemoval(name) {
   pendingDiscordRemovals.delete(name);
   state.board.expertiseRoles = state.board.expertiseRoles.filter(role => role !== name);
 }
+function workspaceChoices(servers, inviteUrl) {
+  return '<section class="panel workspace-choices"><div class="workspace-list">' + servers.map(server =>
+    '<div class="workspace-choice"><span class="server-icon">' + icon('castle') + '</span><div><strong>' + esc(server.name) + '</strong><small>' +
+    (server.installed ? 'Warband is connected' : 'Invite Warband to this server first') + '</small></div>' +
+    (server.installed ? button('Open server', 'data-select-workspace="' + esc(server.id) + '"', 'primary') :
+      server.canInstall ? '<a class="button outline" href="' + esc(inviteUrl + '&guild_id=' + encodeURIComponent(server.id)) +
+      '" target="_blank" rel="noopener noreferrer">Add to Discord</a>' : '') + '</div>').join('') + '</div>' +
+    (!servers.length ? '<p class="hint">No eligible servers were found. Sign out and sign in again with an account that belongs to an enabled server.</p>' : '') +
+    '<p class="error" role="alert"></p></section>';
+}
 function onboardingPage(board) {
-  const signOut = button('Sign out', 'data-onboarding-logout');
+  const signOut = (board.multiServer && board.onboarding !== 'workspace' ? button('Switch server', 'data-switch-workspace') : '') + button('Sign out', 'data-onboarding-logout');
+  if (board.onboarding === 'workspace') {
+    view.innerHTML = heading('Choose a Discord server', 'Open a server workspace or invite Warband to get started.') +
+      workspaceChoices(board.workspaces || [], board.inviteUrl) + '<div class="actions profile-roles">' + signOut + '</div>';
+    return;
+  }
   if (board.onboarding === 'guild-setup') {
     view.innerHTML = heading('Guild setup pending', 'A Discord admin needs to connect the Albion guild before you can continue.') +
       '<div class="actions">' + signOut + '</div>' + errorLine;
@@ -1568,6 +1590,27 @@ document.addEventListener('click', async event => {
   }
   const el = event.target.closest('button');
   if (!el || !state.board) return;
+  if (el.hasAttribute('data-switch-workspace')) {
+    el.disabled = true;
+    showControlLoading(el, true);
+    try {
+      const data = await api('workspaces');
+      showDialog(layout('Choose a Discord server', '<div class="dialog-body">' + workspaceChoices(data.servers, data.inviteUrl) + '</div>'));
+    } catch (error) { toast(error.message); }
+    finally { el.disabled = false; showControlLoading(el, false); }
+    return;
+  }
+  if (el.dataset.selectWorkspace) {
+    const container = el.closest('.workspace-choices');
+    await formTask(container, el, async () => {
+      const data = await api('workspaces', { id: el.dataset.selectWorkspace });
+      const params = new URLSearchParams(location.search);
+      params.set('server', data.selected);
+      if (state.board.workspaceId && state.board.workspaceId !== data.selected) params.delete('party');
+      location.assign('/?' + params);
+    });
+    return;
+  }
   if (el.hasAttribute('data-discard-discord-role')) {
     const form = el.closest('form');
     pendingDiscordRoles.splice(Number(el.dataset.discardDiscordRole), 1);
